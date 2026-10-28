@@ -6,6 +6,7 @@ const fs = require('node:fs');
 test('renderer can request versioned local endpoints', () => {
   assert.equal(validateRequest('GET', '/v1/conversations?q=Mars%20moons'), '/v1/conversations?q=Mars%20moons');
   assert.equal(validateRequest('POST', '/v1/graphs/abc/accept'), '/v1/graphs/abc/accept');
+  assert.equal(validateRequest('GET', '/v1/resources/search?q=2020%2F2021...'), '/v1/resources/search?q=2020%2F2021...');
 });
 test('renderer cannot turn the worker bridge into a network proxy', () => {
   for (const value of ['https://example.com', '//example.com', '/v1/../private', '/v1/%2e%2e/private', '/v1/%2fother', '/v1/health#fragment']) {
@@ -21,4 +22,13 @@ test('preload exposes no raw IPC or Node objects', () => {
   assert.ok(main.includes('nodeIntegration: false'));
   assert.ok(main.includes('contextIsolation: true'));
   assert.ok(main.includes('sandbox: true'));
+});
+
+test('desktop defaults agree with backend platform data directories', () => {
+  const {dataDirectory} = require('../src/desktop/guard.cjs');
+  assert.equal(dataDirectory('linux', {}, '/home/user', '/home/user/.config'), '/home/user/.local/share/veritas');
+  assert.equal(dataDirectory('linux', {XDG_DATA_HOME: '/data'}, '/home/user', ''), '/data/veritas');
+  assert.equal(dataDirectory('darwin', {}, '/Users/user', ''), '/Users/user/Library/Application Support/Veritas');
+  assert.equal(dataDirectory('win32', {LOCALAPPDATA: 'C:\\Users\\user\\AppData\\Local'}, '', ''), 'C:\\Users\\user\\AppData\\Local\\Veritas');
+  assert.equal(dataDirectory('linux', {VERITAS_DATA_DIR: '/custom'}, '/home/user', ''), '/custom');
 });

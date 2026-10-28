@@ -4,7 +4,7 @@ const {spawn} = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const {validateRequest} = require('./guard.cjs');
+const {validateRequest, dataDirectory} = require('./guard.cjs');
 let worker, window, endpoint, dataRoot, quitting = false;
 const token = crypto.randomBytes(32).toString('hex');
 const repository = path.resolve(__dirname, '../..');
@@ -23,7 +23,7 @@ async function request(method, route, body) {
 
 async function startWorker() {
   const resourceRoot = development ? repository : process.resourcesPath;
-  dataRoot = process.env.VERITAS_DATA_DIR || path.join(app.getPath('appData'), 'Veritas');
+  dataRoot = path.resolve(dataDirectory(process.platform, process.env, app.getPath('home'), app.getPath('appData')));
   fs.mkdirSync(dataRoot, {recursive: true});
   const executable = development
     ? (process.env.VERITAS_PYTHON || path.join(repository, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'))

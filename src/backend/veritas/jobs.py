@@ -64,8 +64,12 @@ class Jobs:
                 job.data['status'] = 'cancelled'
                 job.emit('cancelled')
             except Exception as exc:
-                job.data.update(status='failed', error=str(exc))
-                job.emit('error', message=str(exc))
+                if job.cancelled.is_set():
+                    job.data['status'] = 'cancelled'
+                    job.emit('cancelled')
+                else:
+                    job.data.update(status='failed', error=str(exc))
+                    job.emit('error', message=str(exc))
         self.pool.submit(run)
         return job.data['id']
 

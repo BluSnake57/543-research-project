@@ -221,6 +221,13 @@ class DownloadTests(TemporaryTest):
         with patch('veritas.downloads.get_json', side_effect=AssertionError('Network not allowed')):
             self.assertEqual(models.catalog('qwen')['revision'], 'a'*40)
 
+    def test_completed_fever_style_download_is_reusable_offline(self):
+        target = self.root/'models/archive'
+        with patch('veritas.downloads.request', return_value=Response(b'archive')):
+            download('https://example.com/archive.zip', target)
+        with patch('veritas.downloads.request', side_effect=AssertionError('Offline')):
+            self.assertEqual(download('https://example.com/archive.zip', target), target)
+
 
 class AssistantTests(TemporaryTest):
     def test_invalid_citations_cannot_support_verdict(self):
@@ -268,6 +275,24 @@ class AssistantTests(TemporaryTest):
 
 
 class JobTests(TemporaryTest):
+    def test_cancelled_transport_is_not_reported_as_failure(self):
+        jobs = Jobs(self.store)
+        def interrupted(job):
+            job.cancelled.set()
+            raise OSError('Transport closed by cancellation')
+        ident = jobs.submit('chat:test', interrupted)
+        jobs.pool.shutdown()
+        self.assertEqual(jobs.get(ident)['status'], 'cancelled')
+
+    def test_failed_task_persists_error(self):
+        jobs = Jobs(self.store)
+        def failed(job):
+            raise ValueError('Invalid graph')
+        ident = jobs.submit('predict', failed)
+        jobs.pool.shutdown()
+        self.assertEqual(jobs.get(ident)['status'], 'failed')
+        self.assertEqual(jobs.get(ident)['error'], 'Invalid graph')
+
     def test_completion_failure_and_restart(self):
         jobs = Jobs(self.store)
         ident = jobs.submit('smoke', lambda job: {'ok': True})
@@ -292,6 +317,13 @@ class RealGraphSAGESmoke(TemporaryTest):
         self.assertTrue(all(0 <= row['viral_probability'] <= 1 for row in outputs))
         self.assertEqual(result['feature_version'], 1)
         self.assertEqual(result['config']['threshold'], 4)
+        for item in graphs[:2]:
+            self.store.save_graph(item)
+        self.store.configure('checkpoint', result['id'])
+        assistant = Assistant(self.store, Retrieval(self.store), None, Skills([ROOT/'skills'], self.store))
+        via_skill = assistant.invoke('graphsage_predict', {'graph_ids': [g['id'] for g in graphs[:2]]},
+                                     [g['id'] for g in graphs[:2]], [])
+        self.assertEqual(via_skill, outputs)
 
 
 if __name__ == '__main__':

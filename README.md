@@ -15,6 +15,8 @@ This repository contains the implementation and packaging workflows. **It does n
 
 Use **Python 3.11** (recommended), Node.js 22, npm, Git, and a C/C++ toolchain with CMake. `hnswlib` may require compilation. Use a virtual environment so dependencies do not modify system Python.
 
+The desktop targets Electron 45, listed on the [official stable release page](https://releases.electronjs.org/). Install dependencies online to generate the npm lockfile; one could not be resolved in this offline workspace.
+
 ```bash
 python3.11 -m venv .venv
 # Linux/macOS

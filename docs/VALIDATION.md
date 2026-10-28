@@ -7,6 +7,8 @@
 - Real PyTorch GraphSAGE training for three epochs on synthetic cascades, checkpoint save/load, and batch inference, using a locally cached PyTorch 2.14.1 CPU wheel with Python 3.14.8.
 - Node tests for the local API route guard and restricted preload surface, plus JavaScript syntax checks.
 
+The final Python run executes 31 tests: 28 pass, including real training and GraphSAGE skill inference; 3 HTTP integration tests skip because FastAPI is unavailable.
+
 Synthetic training verifies mechanics, not prediction quality on Twitter15/16. No dataset accuracy claim is made.
 
 ## Not yet verified
@@ -21,7 +23,7 @@ Shell network access fails DNS resolution in this environment, and npm has no su
 
 ## Git history
 
-The workspace's `.git` directory was empty and mounted read-only. Normal `git init` failed with `Read-only file system`. Milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree, and exported to `/tmp/veritas-development.bundle`. This is a portable history, not a repair of the protected `.git` directory.
+The workspace's `.git` directory was empty and mounted read-only. Normal `git init` failed with `Read-only file system`. Four milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree, and exported to `/tmp/veritas-development.bundle`. A copy named `veritas-development.bundle` is retained at the workspace root (ignored by Git). This is a portable history, not a repair of the protected `.git` directory.
 
 After copying the bundle to a normal writable location, inspect or clone it with:
 

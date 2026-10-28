@@ -172,7 +172,11 @@ def create_app(root: Path, token: str, manifest_path: Path, skills_path: Path, r
 
     @app.post('/v1/jobs/{ident}/cancel')
     def cancel_job(ident: str):
+        data = jobs.get(ident)
         jobs.cancel(ident)
+        if data['status'] == 'running' and (data['kind'].startswith('chat:') or
+                data['kind'] in ('map-posts', 'estimate-graph', 'qwen-smoke')):
+            runtime.stop()
         return {'cancelling': True}
 
     @app.post('/v1/models/{key}/download')

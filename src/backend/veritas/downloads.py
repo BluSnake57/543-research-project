@@ -40,6 +40,11 @@ def download(url, target, expected=None, size=None, job=None, algorithm='sha256'
     target = Path(target); target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() and expected and digest_file(target, algorithm, job) == expected:
         return target
+    receipt_path = target.with_name(target.name+'.checksum.json')
+    if target.exists() and not expected and receipt_path.exists():
+        receipt = json.loads(receipt_path.read_text())
+        if receipt.get('url') == url and digest_file(target, receipt['algorithm'], job) == receipt['digest']:
+            return target
     partial = target.with_name(target.name+'.part')
     offset = partial.stat().st_size if partial.exists() else 0
     if size and shutil.disk_usage(target.parent).free < max(0, size-offset) + 256*1024**2:

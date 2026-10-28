@@ -208,8 +208,12 @@ def train(graphs, output: Path, config=None, job=None):
                 'dataset_fingerprint': fingerprint(sorted(fingerprint({k: g[k] for k in
                     ('cascade_id', 'nodes', 'edges')}) for g in graphs)), 'report': report}
     output.mkdir(parents=True, exist_ok=True)
-    torch.save(best_state, output / f'{ident}.pt')
-    (output / f'{ident}.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+    weights_temp = output / f'{ident}.pt.tmp'
+    metadata_temp = output / f'{ident}.json.tmp'
+    torch.save(best_state, weights_temp)
+    metadata_temp.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+    weights_temp.replace(output / f'{ident}.pt')
+    metadata_temp.replace(output / f'{ident}.json')
     return metadata
 
 

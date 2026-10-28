@@ -145,6 +145,7 @@ def normalize_posts(rows, mapping, source='import'):
             member['delay'] = ((member['timestamp'] - origin) / 60
                                if member['timestamp'] is not None and origin is not None else None)
         graph = {'id': uuid.uuid4().hex, 'cascade_id': cascade, 'source': source,
+                 'mapping': dict(mapping),
                  'nodes': members, 'edges': edges, 'estimated': False,
                  'accepted': False, 'warnings': missing,
                  'needs_estimation': bool(missing), 'source_hash': fingerprint(rows)}

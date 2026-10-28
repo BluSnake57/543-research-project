@@ -14,3 +14,4 @@ models/
 *.gguf
 *.pt
 *.sqlite*
+*.bundle
