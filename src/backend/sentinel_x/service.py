@@ -18,9 +18,11 @@ from .state import Store, data_directory
 
 
 class Service:
-    def __init__(self, root=None):
+    def __init__(self, root=None, role='assistant'):
+        if role not in ('assistant', 'trainer'):
+            raise ValueError('Unknown application role')
         self.store = Store(Path(root) if root else data_directory())
-        self.jobs = Jobs(self.store)
+        self.jobs = Jobs(self.store, table='trainer_jobs' if role == 'trainer' else 'jobs')
         self.retrieval = Retrieval(self.store)
         self.runtime = Llama(self.store, bundled_runtime())
         self.models = Models(self.store, manifest())

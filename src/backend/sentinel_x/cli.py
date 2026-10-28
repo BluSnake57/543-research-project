@@ -13,6 +13,7 @@ def main():
     parser.add_argument('--data-dir', type=Path, default=data_directory())
     sub = parser.add_subparsers(dest='command')
     sub.add_parser('gui')
+    sub.add_parser('trainer')
     export = sub.add_parser('export')
     export.add_argument('conversation')
     export.add_argument('output', type=Path)
@@ -31,6 +32,9 @@ def main():
     if args.command in (None, 'gui'):
         from .desktop import main as desktop
         return desktop(args.data_dir)
+    if args.command == 'trainer':
+        from .trainer import main as trainer
+        return trainer(args.data_dir)
     store = Store(args.data_dir)
     if args.command == 'export':
         from .exporting import export_conversation

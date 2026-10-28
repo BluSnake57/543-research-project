@@ -158,7 +158,7 @@ class DesktopSmoke(unittest.TestCase):
             service = Service(Path(temporary)); window = Window(service, auto_setup=False)
             try:
                 window.show(); self.app.processEvents()
-                self.assertEqual(window.pages.count(), 6)
+                self.assertEqual(window.pages.count(), 5)
                 window.new_conversation()
                 self.assertEqual(window.conversation_list.count(), 1)
                 self.assertIsNotNone(window.conversation)
@@ -168,7 +168,7 @@ class DesktopSmoke(unittest.TestCase):
                 window.attached.add(ident); window.refresh_graphs()
                 self.assertEqual(window.graph_list.topLevelItemCount(), 1)
                 self.assertIn(ident, window.attached)
-                for i in range(6):
+                for i in range(5):
                     window.navigation.setCurrentRow(i); self.app.processEvents()
                     self.assertEqual(window.pages.currentIndex(), i)
                 window._poll()

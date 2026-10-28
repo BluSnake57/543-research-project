@@ -31,20 +31,24 @@ class Job:
 
 
 class Jobs:
-    def __init__(self, store):
+    def __init__(self, store, table='jobs'):
+        if table not in ('jobs', 'trainer_jobs'):
+            raise ValueError('Unknown job namespace')
         self.store = store
+        self.table = table
         self.live = {}
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='sentinel_x-work')
         with store.connection() as db:
-            for row in db.execute('SELECT id,data FROM jobs').fetchall():
+            db.execute(f'CREATE TABLE IF NOT EXISTS {table}(id TEXT PRIMARY KEY, data TEXT NOT NULL)')
+            for row in db.execute(f'SELECT id,data FROM {table}').fetchall():
                 data = json.loads(row['data'])
                 if data['status'] in ('queued', 'running'):
                     data.update(status='interrupted', error='Application exited before completion')
-                    db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(data), row['id']))
+                    db.execute(f'UPDATE {table} SET data=? WHERE id=?', (json.dumps(data), row['id']))
 
     def persist(self, data):
         with self.store.connection() as db:
-            db.execute('INSERT OR REPLACE INTO jobs VALUES (?,?)', (data['id'], json.dumps(data)))
+            db.execute(f'INSERT OR REPLACE INTO {self.table} VALUES (?,?)', (data['id'], json.dumps(data)))
 
     def submit(self, kind, function):
         job = Job(self, kind)
@@ -75,14 +79,14 @@ class Jobs:
 
     def get(self, ident):
         with self.store.connection() as db:
-            row = db.execute('SELECT data FROM jobs WHERE id=?', (ident,)).fetchone()
+            row = db.execute(f'SELECT data FROM {self.table} WHERE id=?', (ident,)).fetchone()
         if not row:
             raise ValueError('Job not found')
         return json.loads(row[0])
 
     def list(self):
         with self.store.connection() as db:
-            return [json.loads(r[0]) for r in db.execute('SELECT data FROM jobs ORDER BY rowid DESC LIMIT 30')]
+            return [json.loads(r[0]) for r in db.execute(f'SELECT data FROM {self.table} ORDER BY rowid DESC LIMIT 30')]
 
     def cancel(self, ident):
         self.get(ident)

@@ -17,63 +17,13 @@ from PySide6.QtWidgets import (
 
 from .graphs import read_posts, suggest_mapping
 from .service import Service
+from .ui import escape, tree, table, CheckpointControls
 
 DONE = {'completed', 'failed', 'cancelled', 'interrupted'}
 ROLE = Qt.ItemDataRole.UserRole
 
 
-def escape(value):
-    return html.escape(str(value)).replace('\n', '<br>')
-
-
-def tree(value):
-    widget = QTreeWidget(); widget.setHeaderLabels(['Property', 'Value'])
-    def append(parent, key, item):
-        node = QTreeWidgetItem([str(key), '' if isinstance(item, (dict, list)) else str(item)])
-        parent.addChild(node) if isinstance(parent, QTreeWidgetItem) else parent.addTopLevelItem(node)
-        if isinstance(item, dict):
-            for name, entry in item.items(): append(node, name, entry)
-        elif isinstance(item, list):
-            for index, entry in enumerate(item): append(node, index+1, entry)
-    if isinstance(value, dict):
-        for key, item in value.items(): append(widget, key, item)
-    else:
-        append(widget, 'Items', value)
-    widget.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-    return widget
-
-
-def table(columns, rows):
-    widget = QTableWidget(len(rows), len(columns)); widget.setHorizontalHeaderLabels(columns)
-    widget.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-    widget.setWordWrap(True)
-    for i, row in enumerate(rows):
-        for j, value in enumerate(row): widget.setItem(i, j, QTableWidgetItem(str(value)))
-    widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-    return widget
-
-
-class LossChart(QWidget):
-    def __init__(self):
-        super().__init__(); self.history = []; self.setMinimumHeight(160)
-
-    def paintEvent(self, event):
-        painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor('#17232d'))
-        if not self.history:
-            painter.setPen(QColor('#8da4b5'))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, 'Training and validation loss will appear here')
-            return
-        maximum = max(.01, max(max(r['loss'], r['validation_loss']) for r in self.history))
-        for key, color in [('loss', '#83d9b7'), ('validation_loss', '#e6b779')]:
-            painter.setPen(QPen(QColor(color), 2))
-            points = [(20+i/max(len(self.history)-1, 1)*(self.width()-40),
-                       self.height()-20-r[key]/maximum*(self.height()-40)) for i, r in enumerate(self.history)]
-            for (a, b), (c, d) in zip(points, points[1:]):
-                painter.drawLine(int(a), int(b), int(c), int(d))
-
-
-class Window(QMainWindow):
+class Window(CheckpointControls, QMainWindow):
     def __init__(self, service=None, auto_setup=True):
         super().__init__()
         self.service = service or Service()
@@ -83,7 +33,7 @@ class Window(QMainWindow):
         self.setMinimumSize(1000, 700)
         root = QWidget(); self.setCentralWidget(root); layout = QHBoxLayout(root)
         self.navigation = QListWidget(); self.navigation.setFixedWidth(190)
-        self.navigation.addItems(['Conversations', 'Resources', 'Skills', 'Training', 'Models', 'Activity'])
+        self.navigation.addItems(['Conversations', 'Resources', 'Skills', 'Models', 'Activity'])
         left = QVBoxLayout(); left.addWidget(self.heading('Sentinel-X', 'Local research workspace'))
         left.addWidget(self.navigation); left.addWidget(self.button('Open data directory', self.open_data))
         layout.addLayout(left)
@@ -91,7 +41,7 @@ class Window(QMainWindow):
         self.pages = QStackedWidget(); right.addWidget(self.pages, 1)
         self.notice = QLabel('Local data · Local inference'); self.notice.setWordWrap(True)
         right.addWidget(self.notice)
-        self.chat_page(); self.resources_page(); self.skills_page(); self.training_page(); self.models_page(); self.activity_page()
+        self.chat_page(); self.resources_page(); self.skills_page(); self.models_page(); self.activity_page()
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex); self.navigation.setCurrentRow(0)
         self.timer = QTimer(self); self.timer.setInterval(800); self.timer.timeout.connect(self.poll); self.timer.start()
         self.refresh(); self.render_messages()
@@ -364,50 +314,6 @@ class Window(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, 'Skill directory')
         if path: self.service.import_skill(path); self.refresh_skills()
 
-    def training_page(self):
-        layout = self.page('Training', 'GraphSAGE binary virality: observed early propagation → recorded cascade size.')
-        layout.addWidget(self.button('Import native Twitter15 / Twitter16', self.import_twitter))
-        form = QFormLayout()
-        self.threshold = QSpinBox(); self.threshold.setRange(2, 1_000_000); self.threshold.setValue(100)
-        self.window = QSpinBox(); self.window.setRange(1, 100_000); self.window.setValue(60)
-        self.epochs = QSpinBox(); self.epochs.setRange(1, 2000); self.epochs.setValue(80)
-        form.addRow('Viral at ≥ recorded posts', self.threshold); form.addRow('Observation window (minutes)', self.window); form.addRow('Maximum epochs', self.epochs)
-        layout.addLayout(form)
-        layout.addWidget(QLabel('CPU training · Two GraphSAGE layers · Seed 42 · Event-level train/validation/test split'))
-        layout.addWidget(self.button('Start training', lambda: self.watch(self.service.train(self.threshold.value(), self.window.value(), self.epochs.value()))))
-        self.chart = LossChart(); layout.addWidget(self.chart)
-        self.training_progress = QLabel('No training run yet'); layout.addWidget(self.training_progress)
-        self.checkpoints = QComboBox(); layout.addWidget(self.checkpoints)
-        row = QHBoxLayout(); row.addWidget(self.button('Use checkpoint', self.select_checkpoint)); row.addWidget(self.button('View evaluation metrics', self.checkpoint_details)); layout.addLayout(row)
-        self.metrics = QLabel(); self.metrics.setWordWrap(True); layout.addWidget(self.metrics)
-        layout.addStretch()
-
-    def import_twitter(self):
-        path = QFileDialog.getExistingDirectory(self, 'Twitter15/16 directory or their parent')
-        if path: self.watch(self.service.import_twitter(path))
-
-    def refresh_checkpoints(self):
-        selected = self.service.store.setting('checkpoint'); previous = self.checkpoints.currentData()
-        self.checkpoints.clear()
-        for c in self.service.checkpoints():
-            self.checkpoints.addItem(f'{c["id"][:8]} · ≥{c["config"]["threshold"]} posts · {c["config"]["window"]} min', c['id'])
-        target = previous or selected
-        index = self.checkpoints.findData(target)
-        if index >= 0: self.checkpoints.setCurrentIndex(index)
-        selected_model = next((c for c in self.service.checkpoints() if c['id'] == selected), None)
-        if selected_model:
-            report = selected_model['report']['test']
-            self.metrics.setText(f'Selected: {selected[:8]} · Test F1 {report["f1"]:.3f} · Precision {report["precision"]:.3f} · Recall {report["recall"]:.3f} · PR-AUC {report["pr_auc"]:.3f}')
-
-    def select_checkpoint(self):
-        ident = self.checkpoints.currentData()
-        if ident: self.service.configure(checkpoint=ident); self.refresh_checkpoints()
-
-    def checkpoint_details(self):
-        ident = self.checkpoints.currentData()
-        checkpoint = next((c for c in self.service.checkpoints() if c['id'] == ident), None)
-        if checkpoint: self.dialog('Checkpoint evaluation and provenance', tree(checkpoint))
-
     def models_page(self):
         layout = self.page('Models', 'llama.cpp is included with the application. Download model weights and optional evidence here.')
         layout.addWidget(self.button('Set up downloads…', lambda: self.offer_setup(force=True)))
@@ -424,7 +330,29 @@ class Window(QMainWindow):
         self.acceleration = QComboBox(); self.acceleration.addItem('Automatic GPU offload', 'auto'); self.acceleration.addItem('CPU only', '0')
         form.addRow('Context tokens', self.context); form.addRow('Acceleration', self.acceleration); layout.addLayout(form)
         layout.addWidget(self.button('Apply runtime settings', lambda: self.apply_settings()))
+        self.checkpoint_controls(layout)
+        layout.addWidget(self.button('Open Sentinel-X Trainer (separate app)', self.open_trainer))
+        layout.addWidget(self.button('Refresh trained checkpoints', self.refresh_checkpoints))
         label = QLabel('A quantized 9B model still requires several GB of memory; CPU operation can be slow. GPU acceleration depends on the bundled runtime and installed drivers. Imports and inference stay on this device.'); label.setWordWrap(True); layout.addWidget(label); layout.addStretch()
+
+    def open_trainer(self):
+        import os
+        import subprocess
+        if getattr(sys, 'frozen', False):
+            executable = Path(sys.executable)
+            if sys.platform == 'darwin':
+                target = executable.parents[3]/'Sentinel-X-Trainer.app/Contents/MacOS/Sentinel-X-Trainer'
+            else:
+                name = 'Sentinel-X-Trainer.exe' if sys.platform == 'win32' else 'Sentinel-X-Trainer'
+                target = executable.parent.parent/'Sentinel-X-Trainer'/name
+            if not target.is_file():
+                raise ValueError('Install the companion Sentinel-X Trainer bundle next to this app')
+            command = [str(target)]
+        else:
+            command = [sys.executable, '-m', 'sentinel_x.trainer']
+        subprocess.Popen([*command, '--data-dir', str(self.service.store.root)], env=os.environ.copy(),
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.notice.setText('Sentinel-X Trainer opened as a separate application')
 
     def import_model(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Import Qwen GGUF', '', 'GGUF models (*.gguf)')
@@ -485,11 +413,9 @@ class Window(QMainWindow):
             text = ''.join(e.get('text', '') for e in chat['events'] if e['event'] == 'token')
             self.live.setText('Working locally… '+text[-220:])
         else: self.live.clear()
-        training = next((j for j in jobs if j['kind'] == 'training'), None)
-        if training:
-            self.chart.history = [e for e in training['events'] if e['event'] == 'training']; self.chart.update()
-            last = self.chart.history[-1] if self.chart.history else None
-            self.training_progress.setText(f'{training["status"]} · Epoch {last["epoch"]} · Training {last["loss"]:.4f} · Validation {last["validation_loss"]:.4f}' if last else training['status'])
+        selected_checkpoint = self.service.store.setting('checkpoint')
+        if selected_checkpoint != getattr(self, 'last_checkpoint', None):
+            self.last_checkpoint = selected_checkpoint; self.refresh_checkpoints()
         if changed: self.refresh(); self.render_messages()
         active = sum(j['status'] not in DONE for j in jobs)
         if active: self.notice.setText(f'{active} background job(s) · Activity shows progress and errors')

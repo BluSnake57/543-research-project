@@ -20,6 +20,7 @@ sentinel-x = "sentinel_x.cli:main"
 
 [project.gui-scripts]
 sentinel-x-desktop = "sentinel_x.desktop:main"
+sentinel-x-trainer = "sentinel_x.trainer:main"
 
 [tool.setuptools.packages.find]
 where = ["src/backend"]
