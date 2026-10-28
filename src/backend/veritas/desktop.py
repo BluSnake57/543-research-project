@@ -94,7 +94,7 @@ class Window(QMainWindow):
         self.chat_page(); self.resources_page(); self.skills_page(); self.training_page(); self.models_page(); self.activity_page()
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex); self.navigation.setCurrentRow(0)
         self.timer = QTimer(self); self.timer.setInterval(800); self.timer.timeout.connect(self.poll); self.timer.start()
-        self.refresh()
+        self.refresh(); self.render_messages()
         if auto_setup and self.service.status()['first_run']:
             QTimer.singleShot(0, lambda: self.run(lambda: self.watch(self.service.setup())))
 
@@ -150,6 +150,9 @@ class Window(QMainWindow):
         column.addWidget(QLabel('POST DATASETS · select attachments'))
         self.graph_filter = QLineEdit(); self.graph_filter.setPlaceholderText('Filter cascades…'); self.graph_filter.textChanged.connect(self.filter_graphs); column.addWidget(self.graph_filter)
         self.graph_list = QTreeWidget(); self.graph_list.setHeaderLabels(['Cascade', 'Posts', 'Metadata'])
+        self.graph_list.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.graph_list.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.graph_list.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.graph_list.itemChanged.connect(self.toggle_attachment); column.addWidget(self.graph_list)
         column.addWidget(self.button('Inspect / review graph', self.inspect_selected))
         label = QLabel('Truth ≠ reach\n\nEstimated graphs require explicit review. Their predictions are experimental.'); label.setWordWrap(True); column.addWidget(label)
@@ -281,7 +284,8 @@ class Window(QMainWindow):
             accept.setVisible(is_proposal)
             warning.setText('ESTIMATED GRAPH — experimental prediction. Review all inferred links/times before acceptance.' if candidate.get('estimated') else '\n'.join(candidate.get('warnings', [])))
         show(proposed or graph)
-        layout.addWidget(self.button('Ask Qwen to propose missing metadata', lambda: self.watch(self.service.estimate(ident), show)))
+        propose = self.button('Ask Qwen to propose missing metadata', lambda: self.watch(self.service.estimate(ident), show))
+        propose.setEnabled(bool(graph.get('needs_estimation'))); layout.addWidget(propose)
         layout.addWidget(self.button('Close', dialog.close)); self.dialogs.append(dialog); dialog.show()
 
     def accept_graph(self, ident, dialog):

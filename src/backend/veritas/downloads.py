@@ -195,13 +195,17 @@ class Models:
         import re
         import tempfile
         catalog = self.store.setting('runtime_catalog')
+        system, machine = platform.system(), platform.machine()
+        if catalog and catalog.get('platform') != [system, machine]:
+            catalog = None
         if not catalog:
             release = self.manifest['llama_cpp']['release']
             base = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/'
             metadata = get_json(base+release)
-            assets = metadata['assets']
-            if not any('bin-' in item['name'] for item in assets):
-                pointer = next((a for a in assets if a['name'] == 'nightly-tag.txt'), None)
+            try:
+                asset = runtime_asset(metadata['assets'], system, machine)
+            except ValueError:
+                pointer = next((a for a in metadata['assets'] if a['name'] == 'nightly-tag.txt'), None)
                 if not pointer:
                     raise ValueError('Release has no precompiled runtime artifacts')
                 with request(pointer['browser_download_url']) as response:
@@ -209,12 +213,12 @@ class Models:
                 if not re.fullmatch(r'b\d+', release):
                     raise ValueError('Invalid official binary release pointer')
                 metadata = get_json(base+release)
-            asset = runtime_asset(metadata['assets'], platform.system(), platform.machine())
+                asset = runtime_asset(metadata['assets'], system, machine)
             digest = asset.get('digest', '')
             if not digest.startswith('sha256:'):
                 raise ValueError('Official runtime artifact has no SHA-256 digest; choose a verified local executable instead')
             catalog = {'release': release, 'name': asset['name'], 'url': asset['browser_download_url'],
-                       'checksum': digest[7:], 'size': asset['size']}
+                       'checksum': digest[7:], 'size': asset['size'], 'platform': [system, machine]}
             self.store.configure('runtime_catalog', catalog)
         cache = self.store.root/'runtime'
         archive = download(catalog['url'], cache/catalog['name'], catalog['checksum'], catalog['size'], job)

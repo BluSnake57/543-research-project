@@ -1,35 +1,37 @@
 # Validation status
 
-## Verified in the initial workspace
+## Verified after the native Python conversion
 
-- Python bytecode compilation for backend and packaging scripts.
-- Dependency-light regression suite: graph parsing/validation, JSON mapping, estimated-graph acceptance, future-feature isolation, source-event split isolation, retrieval import/update/deletion, citation provenance, FEVER label exclusion, download resume/checksums/cancellation, skill restrictions, conversation tool loops, persistence, and queued jobs.
-- Real PyTorch GraphSAGE training for three epochs on synthetic cascades, checkpoint save/load, and batch inference, using a locally cached PyTorch 2.14.1 CPU wheel with Python 3.14.8.
-- Node tests for the local API route guard and restricted preload surface, plus JavaScript syntax checks.
+All 35 Python tests pass with Python 3.14 and installed dependencies; none are skipped.
 
-The final Python run executes 31 tests: 28 pass, including real training and GraphSAGE skill inference; 3 HTTP integration tests skip because FastAPI is unavailable.
+- Native PySide6/Qt Widgets window creation, all six navigation pages, conversations, and graph attachments using the offscreen platform plugin.
+- Pure-Python wheel build with bundled assets, followed by native-window startup from an isolated extraction of that wheel.
+- Visual inspection of a native-window screenshot.
+- Real PyTorch GraphSAGE training on synthetic cascades, checkpoint save/load, batch inference, and invocation through the skill handler.
+- Native Twitter15/16 and JSON graph parsing, estimate acceptance, future-feature isolation, split isolation, metrics, citations, and persisted conversations/jobs.
+- Actual NumPy memory-mapped vector indexing, semantic retrieval with a deterministic test embedder, incremental file deletion, and old-index migration. No HNSW extension is used.
+- Precompiled-runtime archive checksum verification, unpacking, executable selection, platform/architecture matching, and traversal rejection using an in-memory test artifact.
+- Prebuilt-only pip policy and requirements/project-metadata consistency.
+- Python compilation and CLI help. JavaScript, npm, Electron, React, FastAPI, and application HTTP-server files have been removed.
 
-Synthetic training verifies mechanics, not prediction quality on Twitter15/16. No dataset accuracy claim is made.
+Synthetic training verifies mechanics rather than Twitter15/16 prediction quality. The test embedder validates the semantic-index pipeline rather than BGE model quality. Offscreen Qt tests do not establish every desktop interaction or display-server configuration.
 
 ## Not yet verified
 
-- FastAPI HTTP integration tests: FastAPI is unavailable locally.
-- TypeScript type-check, Vite build, Electron UI launch, and desktop interaction tests: frontend dependencies are not installed.
-- Actual Qwen inference/tool calling: no GGUF or llama.cpp binary is available.
-- Full FEVER download, embedding model execution, and HNSW semantic indexing: required assets/dependencies are unavailable. Keyword retrieval is tested.
-- Packaging, application launch, signing, and acceleration checks on Windows, Linux, and macOS.
+- Live official runtime/model downloads, actual Qwen generation/function parsing, and full FEVER download/indexing.
+- BGE weight loading and retrieval quality on real evidence.
+- Standalone packaging, signing/notarization, and application execution on Windows/macOS. Native Linux UI creation is verified, but no standalone executable has been built here.
+- Real GPU acceleration and held-out performance on the full Twitter15/16 datasets.
 
-Shell network access fails DNS resolution in this environment, and npm has no suitable cached dependencies. CI definitions and reproducible commands are included to run these checks in a network-enabled build environment. Dependency-dependent Python tests report explicit skips.
+Standalone packaging uses PyInstaller on each target OS and prebuilt Python dependencies. No npm or native compilation step is part of normal setup. If a dependency wheel is unavailable for the user's Python/platform combination, pip fails rather than compiling it.
 
 ## Git history
 
-The workspace's `.git` directory was empty and mounted read-only. Normal `git init` failed with `Read-only file system`. Milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree, and exported to `/tmp/veritas-development.bundle`. A copy named `veritas-development.bundle` is retained at the workspace root (ignored by Git). This is a portable history, not a repair of the protected `.git` directory.
-
-After copying the bundle to a normal writable location, inspect or clone it with:
+The workspace's `.git` directory is empty and mounted read-only. Milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree and exported to `/tmp/veritas-development.bundle`. An ignored copy named `veritas-development.bundle` is retained at the workspace root.
 
 ```bash
-git bundle list-heads /tmp/veritas-development.bundle
-git clone /tmp/veritas-development.bundle veritas
+git bundle list-heads veritas-development.bundle
+git clone veritas-development.bundle veritas
 ```
 
-The bundle contains source commits and does not contain downloaded weights, private datasets, or generated indexes.
+This preserves source history without modifying the protected `.git` directory. The bundle excludes weights, datasets, and generated indexes.

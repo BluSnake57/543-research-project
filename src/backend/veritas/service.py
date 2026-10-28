@@ -78,7 +78,10 @@ class Service:
 
     def download(self, key):
         if key == 'runtime':
-            return self.jobs.submit('download:runtime', self.models.install_runtime)
+            def work(job):
+                self.runtime.stop()
+                return self.models.install_runtime(job)
+            return self.jobs.submit('download:runtime', work)
         if key not in ('qwen', 'embedding'):
             raise ValueError('Unknown download')
         return self.jobs.submit('download:'+key, lambda job: self.models.install(key, job))

@@ -1,75 +1,54 @@
 # Veritas
 
-A local desktop research app for **evidence-based fact checking** and **GraphSAGE virality prediction**. Electron/React provides the desktop interface; a packaged Python worker manages llama.cpp, evidence retrieval, and training. Existing `AGENTS.md` is preserved.
+A **native Python desktop app** for local evidence-based fact checking and GraphSAGE virality prediction. The interface uses Qt Widgets through PySide6 Essentials. There is no JavaScript, Electron, React, npm, browser engine, or application HTTP server.
 
-- Multiple persistent conversations with post-dataset attachments and streamed responses.
-- Qwen3.5-9B GGUF through an application-managed `llama-server`.
-- Local RAG from a directory named `resources`, including optional FEVER Wikipedia evidence.
-- Native Twitter15/16 imports and reproducible binary GraphSAGE training in the UI or CLI.
-- Local skill folders; the bundled GraphSAGE skill lets Qwen request graph predictions.
-- Explicit review of inferred propagation links/times, with experimental-result warnings.
+Qwen3.5-9B runs through a managed llama.cpp executable. Multiple saved conversations can attach post datasets, retrieve evidence from `resources`, and invoke the GraphSAGE skill. JSON/JSONL data imports remain supported; those are dataset formats, not JavaScript.
 
-This repository contains the implementation and packaging workflows. **It does not include prebuilt installers, downloaded model weights, or a bundled llama.cpp binary.** See [validation status](docs/VALIDATION.md) for checks actually run.
+## Install and run
 
-## Development setup
-
-Use **Python 3.11** (recommended), Node.js 22, npm, Git, and a C/C++ toolchain with CMake. `hnswlib` may require compilation. Use a virtual environment so dependencies do not modify system Python.
-
-The desktop targets Electron 45, listed on the [official stable release page](https://releases.electronjs.org/). Install dependencies online to generate the npm lockfile; one could not be resolved in this offline workspace.
-
-On Fedora, install native build prerequisites before running pip:
+Use a 64-bit Python 3.11–3.14 installation. Python 3.11 is the conservative choice for dependency availability; the native application and tests have also run here on Python 3.14.
 
 ```bash
-sudo dnf install python3-devel gcc-c++ cmake
+python -m venv .venv
 ```
 
-On Debian/Ubuntu, use `sudo apt install python3-dev build-essential cmake`. The development headers must match the Python interpreter used by your virtual environment. For a separately installed Python version, install that version's development package instead of the system default.
-
-If `hnswlib` fails with `fatal error: Python.h: No such file or directory`, the matching Python development headers are missing. Install them, then rerun `python -m pip install -r requirements.txt` in the same virtual environment. You do not need to recreate it for this error. Python development headers are operating-system dependencies and cannot be installed through `requirements.txt`.
+Activate the environment:
 
 ```bash
-python3.11 -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
+# Windows PowerShell
+# .venv\Scripts\Activate.ps1
+```
+
+Install and launch:
+
+```bash
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-npm install
+python -m veritas
 ```
 
-`requirements.txt` lists runtime dependencies and installs this repository in editable mode. `pyproject.toml` also supports the standard `python -m pip install -e .` workflow. For tests, linting, and packaging:
+`veritas` and `veritas-desktop` are also installed as launch commands. No Node.js or compiler is required for normal setup.
 
-```bash
-python -m pip install -r requirements-dev.txt
-```
+**Dependencies use precompiled wheels.** `requirements.txt` enforces `--only-binary=:all:` so pip does not silently compile a native dependency. This repository itself is pure Python and installs in editable mode. If pip reports that no matching binary exists, use a supported 64-bit Python/platform combination rather than installing a compiler. The previous `hnswlib` dependency has been removed; the semantic index now uses precompiled NumPy and memory-mapped vectors. An old environment may retain unused packages, but they are no longer imported or required.
 
-Build the pinned llama.cpp runtime (network access required):
+First launch queues a download of an official **precompiled llama-server**, Qwen3.5-9B Q4_K_M GGUF, and BGE-small-en-v1.5 embeddings. Runtime selection matches the OS and architecture, verifies GitHub's published SHA-256 digest, and persists the chosen artifact. Models also verify pinned source metadata and checksums. Download progress, errors, retry, and cancellation are available in Activity and Models. CPU runtime downloads are preferred on Windows/Linux; macOS uses the matching CPU/Metal release. You can choose an existing executable instead.
 
-```bash
-python scripts/build_llama.py --backend cpu
-```
-
-Use `--backend metal` on Apple Silicon, `--backend cuda` with a compatible NVIDIA CUDA toolkit, or `--backend vulkan` with a Vulkan SDK. CPU is always available in the CPU build; automatic GPU offload requires an accelerated build. In Models, choose the resulting `build/llama/bin/llama-server` executable (`.exe` on Windows), or assemble the worker as described below.
-
-```bash
-npm run dev
-```
-
-The launcher uses `.venv` automatically; set `VERITAS_PYTHON` to override the interpreter. First launch queues automatic Qwen and embedding downloads. Downloads need internet access; inference and retrieval operate offline afterward. Use Models to retry/resume downloads, import a local GGUF, choose context/acceleration, and run **Verify generation & tools**. FEVER is downloaded only when requested.
-
-For a production frontend build without an installer: `npm run build`, then `npm start` with the Python environment and runtime configured. This is a proposed development workflow; dependency installation and the frontend build could not be completed in the initial restricted environment.
+Internet access is required for downloads; inference and imported data remain local afterward. The runtime installer does not fall back to compiling code. If no compatible artifact is published or its checksum is unavailable, Models explains the error and lets you select a verified local executable. Actual online downloads and Qwen generation have not been exercised in this workspace.
 
 ## Use the app
 
-1. Complete model setup in **Models** and run the runtime smoke check.
-2. In **Resources**, select the resources directory and choose **Index directory**, or download/index FEVER. TXT, Markdown, JSON, JSONL, and CSV are supported. Reindex to apply changes or deletions. Missing embeddings produce an explicitly reported keyword-only index; download embeddings and reindex for hybrid retrieval.
-3. In **Training**, import `twitter15`, `twitter16`, or their parent directory. Train and select a checkpoint. Defaults: viral at **100 recorded posts**, observation window **60 minutes**, seed **42**.
-4. In **Conversations**, import JSON/JSONL posts, review field mappings, and select graph attachments. For text-only bundles, select grouping as one cascade when appropriate. Inspect incomplete graphs, request estimation, and **review/accept** the proposal before prediction.
-5. Ask about factual claims, virality, or both. Verdicts and graph results appear separately, with evidence excerpts and prediction metadata.
+- **Conversations:** create/search/rename/delete chats, import JSON/JSONL posts, map their fields, and select attached cascades. Ask about factual claims, virality, or both. Responses show verdicts, evidence excerpts, and separate graph predictions.
+- **Resources:** select a directory named `resources` or another local directory, then index TXT, Markdown, JSON, JSONL, or CSV. Reindex after edits/deletions. Semantic search combines NumPy cosine similarity with SQLite full-text results. Until embeddings are downloaded and indexed, the reported fallback is keyword search.
+- **Skills:** enable/disable local skills or import folders containing instructions and a tool manifest. GraphSAGE is included. Skill files cannot execute arbitrary code.
+- **Training:** import native Twitter15/16 directories or their parent, train, inspect metrics, and select a checkpoint. Defaults: viral at **100 recorded posts**, observed during the first **60 minutes**, seed **42**.
+- **Models:** download/retry models and the precompiled runtime, import a GGUF, select an executable, configure context/acceleration, and run **Verify generation & tools**.
+- **Activity:** inspect jobs, progress, results, errors, and cancellation.
 
-Conversations and resources are shared only within this local installation; graph attachments scope Qwen's prediction tools to the conversation. Large bundles that exceed the configured context are rejected rather than silently dropping posts. Split these into smaller batches or increase context if memory permits.
+For missing graph metadata, inspect the cascade, ask Qwen to propose links/timing, and review the proposal's tables and assumptions before accepting. Estimates remain prominently labeled experimental. No virality prediction is permitted for an unaccepted estimated graph.
 
-### Example post input
+Example post dataset:
 
 ```json
 [
@@ -78,11 +57,17 @@ Conversations and resources are shared only within this local installation; grap
 ]
 ```
 
-Numeric timestamps are Unix **seconds**; string timestamps must include a timezone. Optional `cascade_id` groups posts explicitly. JSON field aliases and a Qwen-assisted mapping workflow are supported. IDs and observed relationships are validated; Qwen cannot silently overwrite an observed parent or timestamp. See [data and model behavior](docs/DATA_AND_MODELS.md).
+Numeric timestamps are Unix seconds; string timestamps require a timezone. Optional `cascade_id` groups posts. For a text-only bundle that should be estimated as one cascade, choose that grouping during import. Large bundles that exceed the model context are rejected rather than silently dropping posts.
 
-## CLI
+## FEVER and prediction behavior
 
-The CLI and UI share training, preprocessing, and inference implementations:
+Optional FEVER setup downloads the historical Wikipedia evidence corpus, then builds an index. Claim labels and evaluation annotations stay outside the evidence directory. Citations retain page/sentence provenance. Factual verdicts are **supported**, **refuted**, or **insufficient evidence**; a missing valid citation cannot support a definitive verdict.
+
+GraphSAGE predicts recorded cascade growth, independently of factual support. Twitter15/16 rumor labels are not virality labels. Training derives its target from recorded cascade size and excludes future nodes/edges from observed features. Real-world reach and estimated-graph quality are not established by dataset test metrics. See [data and model details](docs/DATA_AND_MODELS.md).
+
+Full FEVER indexing needs substantial disk space and time. Memory-mapped vector shards bound search memory, but exact semantic search over a large corpus trades speed for simpler installation. Qwen's 9B weights and context also need substantial RAM; CPU responses may be slow.
+
+## CLI and tests
 
 ```bash
 veritas train /path/to/datasets --threshold 100 --window 60 --epochs 80 --seed 42
@@ -90,44 +75,36 @@ veritas index /path/to/resources
 veritas predict /path/to/canonical-graphs.json /path/to/checkpoints/MODEL_ID.json
 ```
 
-The `predict` input is the canonical graph representation shown by **Inspect / review**, not raw posts. Multiple graphs may be passed as an array. Estimated graphs must include explicit acceptance. `veritas --data-dir /custom/path train ...` overrides the application-data location.
-
-## Build installers
-
-Build on each target operating system; Python freezing and native libraries are platform-specific:
+The prediction input is the canonical graph shown in graph details, not raw post JSON. Use `veritas --data-dir /custom/path` before the subcommand to relocate local state.
 
 ```bash
-python scripts/lock_manifest.py
-python scripts/build_llama.py --backend cpu
-python scripts/package_worker.py
-npm run make
-```
-
-Use `metal` on Apple Silicon. Artifacts appear in `out/make`: Windows Squirrel installer, Linux DEB/RPM/ZIP, and macOS ZIP containing the `.app`. Python, Docker, and a browser are not required by end users. The packaged runtime and Python libraries increase installer size; model weights download separately.
-
-`lock_manifest.py` resolves immutable model revisions and upstream artifact hashes without downloading weights. Packaging includes this release manifest. Development installs pin resolved metadata in the application-data model catalog on first download. Downloads verify LFS SHA-256 or Git blob SHA-1, support resume, and write a ready marker only when complete. FEVER lacks an upstream checksum in this integration; it uses HTTPS, ZIP CRC validation, and a recorded local digest.
-
-`.github/workflows/package.yml` builds on Windows x64, Linux x64, and macOS Apple Silicon. Default workflow variants use CPU on Windows/Linux and Metal on macOS. CUDA/Vulkan variants can be built with their SDKs. Apple signing/notarization reads `APPLE_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`; unsigned local packages are development artifacts. Windows public distribution also requires configuring a signing identity. No installers have been built or signed in this workspace.
-
-## Checks
-
-```bash
+python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 ruff check src/backend scripts tests
-npm test
-npm run build
 ```
 
-Python tests cover graph parsing, temporal/split leakage, retrieval provenance, label exclusion, estimate review, downloads, conversation tool calls, persistence, API authentication, and real PyTorch training/checkpoint inference. Dependency-dependent tests skip explicitly when their libraries are absent. CI installs dependencies before running these checks. Real Qwen inference additionally requires the multi-gigabyte model and compiled runtime; use Models → Verify generation & tools.
+For headless CI, set `QT_QPA_PLATFORM=offscreen` (Linux: prefix the test command with that assignment). The tests include a real Qt window, all six pages, conversation/attachment interactions, NumPy semantic retrieval, precompiled-runtime archive verification, and real PyTorch GraphSAGE training/checkpoint/skill inference. See [validation status](docs/VALIDATION.md) for limitations.
 
-## Layout and local data
+## Package standalone applications
 
-- `src/desktop`: Electron main process, restricted preload bridge, and IPC checks.
-- `src/renderer`: React interface.
-- `src/backend/veritas`: local API, inference, RAG, skills, graph import, training, and CLI.
-- `skills/graphsage`: bundled skill instructions and tool manifest.
-- `tests`, `scripts`, `docs`: verification, build tools, and model/data notes.
+On each target operating system:
 
-Open the application-data directory from the sidebar. It contains `resources`, `models`, `graphs`, `checkpoints`, `skills`, `index`, logs, and SQLite records. Set `VERITAS_DATA_DIR` to relocate it. Imported resource directories may remain external and are read in place. Do not commit datasets, model weights, credentials, or generated indexes.
+```bash
+python -m pip install -r requirements-dev.txt
+python scripts/lock_manifest.py
+python scripts/package_app.py
+```
 
-To add a skill, follow [the local skill format](docs/SKILLS.md). Contributions should include focused behavior tests and an explanation of verification limits.
+PyInstaller freezes the Python application and installed binary libraries. This packages existing code; it does not compile PyTorch, Qt, or a C++ runtime from source. Output is a Windows ZIP containing `Veritas.exe` and supporting files, a macOS ZIP containing `Veritas.app`, or a Linux tarball containing the executable and libraries. Keep the entire extracted application directory together. End users do not need Python.
+
+The packaged app downloads the precompiled runtime and models on first launch. To bundle an existing runtime instead, use `python scripts/package_app.py --llama-dir /path/to/precompiled/binaries`. No CMake step is needed for normal packaging. `scripts/build_llama.py` remains an optional developer tool for custom accelerated source builds.
+
+`.github/workflows/package.yml` defines Windows x64, Linux x64, and macOS Apple Silicon builds. Signing/notarization and public distribution are separate release steps; installers have not been built here.
+
+## Source and local data
+
+Application code lives in `src/backend/veritas`: `desktop.py` is the Qt UI and `service.py` directly connects it to inference, retrieval, skills, and training. Bundled configuration and the GraphSAGE skill are package assets under `src/backend/veritas/assets`. Tests, build scripts, and documentation are in `tests`, `scripts`, and `docs`.
+
+Local conversations, resources, model catalogs, checkpoints, indexes, and logs use the platform application-data directory. Open it from the sidebar or set `VERITAS_DATA_DIR` to override it. Existing conversations/checkpoints remain compatible. Reindex an older HNSW evidence index to migrate it to NumPy shards.
+
+Keep weights, datasets, credentials, and generated indexes out of Git. `AGENTS.md` remains unchanged. [Skill authoring](docs/SKILLS.md) describes the supported extension format.
