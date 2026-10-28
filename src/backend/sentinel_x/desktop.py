@@ -95,8 +95,18 @@ class Window(QMainWindow):
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex); self.navigation.setCurrentRow(0)
         self.timer = QTimer(self); self.timer.setInterval(800); self.timer.timeout.connect(self.poll); self.timer.start()
         self.refresh(); self.render_messages()
-        if auto_setup and self.service.status()['first_run']:
-            QTimer.singleShot(0, lambda: self.run(lambda: self.watch(self.service.setup())))
+        if auto_setup:
+            QTimer.singleShot(0, lambda: self.run(self.offer_setup))
+
+    def offer_setup(self, force=False):
+        from .setup_dialog import SetupDialog, needs_prompt
+        if not force and not needs_prompt(self.service):
+            return
+        previous = getattr(self, 'setup_guide', None)
+        if previous is not None and previous.isVisible():
+            previous.raise_(); return
+        self.setup_guide = SetupDialog(self.service, self)
+        self.setup_guide.show()
 
     def heading(self, title, description=''):
         label = QLabel(f'<h2>{escape(title)}</h2><p style="color:#93a9b9">{escape(description)}</p>')
@@ -399,10 +409,11 @@ class Window(QMainWindow):
         if checkpoint: self.dialog('Checkpoint evaluation and provenance', tree(checkpoint))
 
     def models_page(self):
-        layout = self.page('Models', 'Precompiled llama.cpp runtime and Python wheels. No compiler or Node.js is required for normal setup.')
+        layout = self.page('Models', 'llama.cpp is included with the application. Download model weights and optional evidence here.')
+        layout.addWidget(self.button('Set up downloads…', lambda: self.offer_setup(force=True)))
         self.model_status = QLabel(); self.model_status.setWordWrap(True); layout.addWidget(self.model_status)
         row = QHBoxLayout()
-        for key, label in [('runtime', 'Download precompiled runtime'), ('qwen', 'Download / verify Qwen'), ('embedding', 'Download / verify embeddings')]:
+        for key, label in [('qwen', 'Download / verify Qwen'), ('embedding', 'Download / verify embeddings')]:
             row.addWidget(self.button(label, lambda name=key: self.watch(self.service.download(name))))
         layout.addLayout(row)
         row = QHBoxLayout(); row.addWidget(self.button('Import local GGUF', self.import_model)); row.addWidget(self.button('Choose llama-server', self.choose_runtime)); row.addWidget(self.button('Verify generation & tools', lambda: self.watch(self.service.smoke())))
@@ -413,7 +424,7 @@ class Window(QMainWindow):
         self.acceleration = QComboBox(); self.acceleration.addItem('Automatic GPU offload', 'auto'); self.acceleration.addItem('CPU only', '0')
         form.addRow('Context tokens', self.context); form.addRow('Acceleration', self.acceleration); layout.addLayout(form)
         layout.addWidget(self.button('Apply runtime settings', lambda: self.apply_settings()))
-        label = QLabel('A quantized 9B model still requires several GB of memory; CPU operation can be slow. GPU acceleration depends on the downloaded runtime and installed drivers. Imports and inference stay on this device.'); label.setWordWrap(True); layout.addWidget(label); layout.addStretch()
+        label = QLabel('A quantized 9B model still requires several GB of memory; CPU operation can be slow. GPU acceleration depends on the bundled runtime and installed drivers. Imports and inference stay on this device.'); label.setWordWrap(True); layout.addWidget(label); layout.addStretch()
 
     def import_model(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Import Qwen GGUF', '', 'GGUF models (*.gguf)')

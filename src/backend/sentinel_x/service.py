@@ -68,20 +68,22 @@ class Service:
         if set(values) & {'context', 'gpu_layers', 'llama_path'}:
             self.runtime.stop()
 
-    def setup(self):
+    def setup(self, keys=('qwen', 'embedding'), fever=False):
+        keys = tuple(keys)
+        if set(keys) - {'qwen', 'embedding'}:
+            raise ValueError('Only model weights are downloaded during setup')
         self.store.configure('setup_started', True)
         def work(job):
-            runtime = self.models.install_runtime(job) if not self.runtime.configured()[0] else None
-            return {'runtime': runtime, 'models': [self.models.install(key, job)
-                                                   for key in ('qwen', 'embedding')]}
+            result = {'models': [self.models.install(key, job) for key in keys]}
+            if fever:
+                result['fever'] = self.models.fever(job)
+                result['fever']['index'] = self.retrieval.index(
+                    Path(result['fever']['evidence_directory']), job)
+                self.store.configure('fever_ready', not result['fever']['index']['errors'])
+            return result
         return self.jobs.submit('setup', work)
 
     def download(self, key):
-        if key == 'runtime':
-            def work(job):
-                self.runtime.stop()
-                return self.models.install_runtime(job)
-            return self.jobs.submit('download:runtime', work)
         if key not in ('qwen', 'embedding'):
             raise ValueError('Unknown download')
         return self.jobs.submit('download:'+key, lambda job: self.models.install(key, job))
@@ -146,6 +148,7 @@ class Service:
         def work(job):
             result = self.models.fever(job)
             result['index'] = self.retrieval.index(Path(result['evidence_directory']), job)
+            self.store.configure('fever_ready', not result['index']['errors'])
             return result
         return self.jobs.submit('fever', work)
 
