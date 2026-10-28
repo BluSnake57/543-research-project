@@ -23,7 +23,7 @@ Shell network access fails DNS resolution in this environment, and npm has no su
 
 ## Git history
 
-The workspace's `.git` directory was empty and mounted read-only. Normal `git init` failed with `Read-only file system`. Four milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree, and exported to `/tmp/veritas-development.bundle`. A copy named `veritas-development.bundle` is retained at the workspace root (ignored by Git). This is a portable history, not a repair of the protected `.git` directory.
+The workspace's `.git` directory was empty and mounted read-only. Normal `git init` failed with `Read-only file system`. Milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree, and exported to `/tmp/veritas-development.bundle`. A copy named `veritas-development.bundle` is retained at the workspace root (ignored by Git). This is a portable history, not a repair of the protected `.git` directory.
 
 After copying the bundle to a normal writable location, inspect or clone it with:
 

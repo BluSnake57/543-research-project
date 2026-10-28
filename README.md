@@ -17,6 +17,16 @@ Use **Python 3.11** (recommended), Node.js 22, npm, Git, and a C/C++ toolchain w
 
 The desktop targets Electron 45, listed on the [official stable release page](https://releases.electronjs.org/). Install dependencies online to generate the npm lockfile; one could not be resolved in this offline workspace.
 
+On Fedora, install native build prerequisites before running pip:
+
+```bash
+sudo dnf install python3-devel gcc-c++ cmake
+```
+
+On Debian/Ubuntu, use `sudo apt install python3-dev build-essential cmake`. The development headers must match the Python interpreter used by your virtual environment. For a separately installed Python version, install that version's development package instead of the system default.
+
+If `hnswlib` fails with `fatal error: Python.h: No such file or directory`, the matching Python development headers are missing. Install them, then rerun `python -m pip install -r requirements.txt` in the same virtual environment. You do not need to recreate it for this error. Python development headers are operating-system dependencies and cannot be installed through `requirements.txt`.
+
 ```bash
 python3.11 -m venv .venv
 # Linux/macOS
