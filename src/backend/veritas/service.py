@@ -1,0 +1,255 @@
+"""Direct Python application services. Qt and CLI require no web server or IPC bridge."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import shutil
+
+from .assistant import Assistant
+from .config import ASSETS, bundled_runtime, manifest
+from .downloads import Models
+from .graphs import (estimate_graph, native_twitter, normalize_posts, read_posts,
+                     suggest_mapping, validate_graph)
+from .jobs import Jobs
+from .retrieval import Retrieval
+from .runtime import Llama
+from .skills import Skills
+from .state import Store, data_directory
+
+
+class Service:
+    def __init__(self, root=None):
+        self.store = Store(Path(root) if root else data_directory())
+        self.jobs = Jobs(self.store)
+        self.retrieval = Retrieval(self.store)
+        self.runtime = Llama(self.store, bundled_runtime())
+        self.models = Models(self.store, manifest())
+        self.skills = Skills([ASSETS/'skills', self.store.root/'skills'], self.store)
+        self.assistant = Assistant(self.store, self.retrieval, self.runtime, self.skills)
+
+    def close(self):
+        for job in self.jobs.live.values():
+            job.cancelled.set()
+        self.runtime.stop()
+        self.jobs.pool.shutdown(wait=False, cancel_futures=True)
+
+    def cancel(self, ident):
+        data = self.jobs.get(ident)
+        self.jobs.cancel(ident)
+        if data['status'] == 'running' and (data['kind'].startswith('chat:') or
+                data['kind'] in ('map-posts', 'estimate-graph', 'qwen-smoke')):
+            self.runtime.stop()
+
+    def status(self):
+        executable, model = self.runtime.configured()
+        return {'root': str(self.store.root), 'models': self.models.status(),
+                'resources': self.store.setting('resources', str(self.store.root/'resources')),
+                'llama_path': executable, 'qwen_path': model,
+                'checkpoint': self.store.setting('checkpoint'),
+                'context': self.store.setting('context', 8192),
+                'gpu_layers': str(self.store.setting('gpu_layers', 'auto')),
+                'first_run': not self.store.setting('setup_started', False)}
+
+    def configure(self, **values):
+        if set(values) - {'resources', 'context', 'gpu_layers', 'llama_path', 'checkpoint'}:
+            raise ValueError('Unknown setting')
+        for key, value in values.items():
+            if key == 'context' and (not isinstance(value, int) or not 2048 <= value <= 32768):
+                raise ValueError('Context must be between 2048 and 32768')
+            if key == 'gpu_layers' and str(value) != 'auto' and (not str(value).isdigit() or int(value) > 999):
+                raise ValueError('GPU layers must be auto or 0–999')
+            if key == 'checkpoint' and value and (not isinstance(value, str) or not value.isalnum() or
+                    not (self.store.root/'checkpoints'/f'{value}.json').is_file()):
+                raise ValueError('Checkpoint not found')
+            if key in ('llama_path', 'resources') and not isinstance(value, str):
+                raise ValueError('Path must be a string')
+        for key, value in values.items():
+            self.store.configure(key, value)
+        if set(values) & {'context', 'gpu_layers', 'llama_path'}:
+            self.runtime.stop()
+
+    def setup(self):
+        self.store.configure('setup_started', True)
+        def work(job):
+            runtime = self.models.install_runtime(job) if not self.runtime.configured()[0] else None
+            return {'runtime': runtime, 'models': [self.models.install(key, job)
+                                                   for key in ('qwen', 'embedding')]}
+        return self.jobs.submit('setup', work)
+
+    def download(self, key):
+        if key == 'runtime':
+            return self.jobs.submit('download:runtime', self.models.install_runtime)
+        if key not in ('qwen', 'embedding'):
+            raise ValueError('Unknown download')
+        return self.jobs.submit('download:'+key, lambda job: self.models.install(key, job))
+
+    def import_model(self, path):
+        self.runtime.stop()
+        return self.models.import_qwen(path)
+
+    def smoke(self):
+        def work(job):
+            self.runtime.start(job)
+            if self.runtime.structured('Return {"ready":true}.', job).get('ready') is not True:
+                raise ValueError('Generation smoke check failed')
+            tools = [{'type': 'function', 'function': {'name': 'smoke_echo',
+                      'description': 'Echo a message', 'parameters': {'type': 'object',
+                      'properties': {'message': {'type': 'string'}}, 'required': ['message']}}}]
+            result = self.runtime.stream([{'role': 'user', 'content':
+                                          'Call smoke_echo with message hello. Do not answer directly.'}], tools, job)
+            calls = result.get('tool_calls', [])
+            if not calls or calls[0]['function']['name'] != 'smoke_echo':
+                raise ValueError('Qwen function calling is incompatible with this runtime/model')
+            json.loads(calls[0]['function']['arguments'])
+            return {'generation': True, 'function_calling': True}
+        return self.jobs.submit('qwen-smoke', work)
+
+    def chat(self, conversation, text, graph_ids):
+        if not text.strip() or len(text) > 6000:
+            raise ValueError('Enter a message of 1–6000 characters')
+        if len(graph_ids) > 100:
+            raise ValueError('Attach at most 100 graphs')
+        if not any(c['id'] == conversation for c in self.store.conversations()):
+            raise ValueError('Conversation not found')
+        if any(j.data['kind'] == f'chat:{conversation}' and j.data['status'] in ('queued', 'running')
+               for j in self.jobs.live.values()):
+            raise ValueError('Wait for the current response or cancel it first')
+        return self.jobs.submit(f'chat:{conversation}', lambda job:
+            self.assistant.chat(conversation, text, graph_ids, job))
+
+    def rename(self, ident, title):
+        with self.store.connection() as db:
+            db.execute('UPDATE conversations SET title=? WHERE id=?', (title[:200], ident))
+
+    def delete_conversation(self, ident):
+        if any(j.data['kind'] == f'chat:{ident}' and j.data['status'] in ('queued', 'running')
+               for j in self.jobs.live.values()):
+            raise ValueError('Cancel the active chat and wait for it to finish before deletion')
+        with self.store.connection() as db:
+            db.execute('DELETE FROM conversations WHERE id=?', (ident,))
+
+    def index(self, path):
+        self.configure(resources=str(path))
+        return self.jobs.submit('index', lambda job: self.retrieval.index(Path(path), job))
+
+    def search(self, query):
+        return self.jobs.submit('search', lambda job: self.retrieval.search(query[:2000]))
+
+    def fever(self):
+        def work(job):
+            result = self.models.fever(job)
+            result['index'] = self.retrieval.index(Path(result['evidence_directory']), job)
+            return result
+        return self.jobs.submit('fever', work)
+
+    def import_posts(self, path, mapping=None, combine=False):
+        rows = read_posts(Path(path)); mapping = mapping or suggest_mapping(rows)
+        if combine:
+            for row in rows:
+                row['__veritas_cascade'] = 'bundle'
+            mapping = {**mapping, 'cascade_id': '__veritas_cascade'}
+        graphs = normalize_posts(rows, mapping, str(path))
+        for graph in graphs:
+            self.store.save_graph(graph)
+        return [g['id'] for g in graphs]
+
+    def map_posts(self, path):
+        rows = read_posts(Path(path))
+        def work(job):
+            result = self.runtime.structured('Map these fields to id,text,author_id,timestamp,parent_id,cascade_id. '
+                'Return {"mapping":{"id":"actual_field",...}}, null for missing fields. '
+                'Do not invent values. Samples:\n'+json.dumps(rows[:3])[:10000], job)
+            mapping = result.get('mapping'); allowed = suggest_mapping(rows)
+            keys = set().union(*(r.keys() for r in rows[:100]))
+            if not isinstance(mapping, dict) or set(mapping) != set(allowed):
+                raise ValueError('Qwen returned an incomplete field mapping')
+            if any(value is not None and (not isinstance(value, str) or value not in keys)
+                   for value in mapping.values()):
+                raise ValueError('Qwen mapped a field absent from the input')
+            return mapping
+        return self.jobs.submit('map-posts', work)
+
+    def import_twitter(self, path):
+        directory = Path(path)
+        folders = [directory] if (directory/'tree').is_dir() else [directory/name
+                   for name in ('twitter15', 'twitter16') if (directory/name/'tree').is_dir()]
+        if not folders:
+            raise ValueError('Choose a Twitter15/16 directory or their parent')
+        def work(job):
+            result = {'imported': 0, 'errors': []}
+            existing = {(g['source'], g['cascade_id']): g['id'] for g in self.store.graphs()}
+            for folder in folders:
+                for graph in native_twitter(folder):
+                    job.check()
+                    if 'error' in graph:
+                        result['errors'].append(graph['error'])
+                    else:
+                        graph['native_twitter'] = True
+                        if (folder.name, graph['cascade_id']) in existing:
+                            graph['id'] = existing[(folder.name, graph['cascade_id'])]
+                        self.store.save_graph(graph); result['imported'] += 1
+                    if result['imported'] % 25 == 0:
+                        job.emit('importing', **result)
+            return result
+        return self.jobs.submit('twitter-import', work)
+
+    def estimate(self, ident):
+        graph = self.store.graph(ident)
+        if len(graph['nodes']) > 100:
+            raise ValueError('Estimate at most 100 posts at once')
+        def work(job):
+            prompt = ('Propose missing propagation metadata; this is an estimate, not observations. '
+                'Return {"edges":[["parent_id","child_id"]],"delays":{"node_id":minutes},'
+                '"assumptions":"explain all inferred links and timing"}. '
+                'Use existing IDs only. Preserve observed edges/times. Make a single acyclic cascade. '
+                'Delays are minutes since root. Data:\n'+json.dumps(graph))
+            if len(prompt) > 24000:
+                raise ValueError('Graph estimation input is too large; split the bundle')
+            proposed = estimate_graph(graph, self.runtime.structured(prompt, job))
+            self.store.configure('proposal:'+ident, proposed)
+            return proposed
+        return self.jobs.submit('estimate-graph', work)
+
+    def accept(self, ident):
+        proposed = self.store.setting('proposal:'+ident)
+        if not proposed:
+            raise ValueError('No estimated graph proposal to review')
+        validate_graph(proposed); proposed['accepted'] = True
+        self.store.save_graph(proposed); self.store.configure('proposal:'+ident, None)
+        return proposed
+
+    def checkpoints(self):
+        return [json.loads(p.read_text()) for p in sorted((self.store.root/'checkpoints').glob('*.json'))]
+
+    def train(self, threshold=100, window=60., epochs=80):
+        def work(job):
+            from .learning import train
+            self.runtime.stop()
+            graphs = [g for g in self.store.graphs() if g.get('native_twitter') or
+                      g['source'].lower() in ('twitter15', 'twitter16')]
+            result = train(graphs, self.store.root/'checkpoints',
+                           {'threshold': threshold, 'window': window, 'epochs': epochs}, job)
+            self.configure(checkpoint=result['id'])
+            return result
+        return self.jobs.submit('training', work)
+
+    def import_skill(self, path):
+        source = Path(path)
+        data = json.loads((source/'tools.json').read_text())
+        ident = data['id']
+        if not isinstance(ident, str) or not ident.replace('-', '').replace('_', '').isalnum():
+            raise ValueError('Invalid skill ID')
+        if any(s['id'] == ident for s in self.skills.list()):
+            raise ValueError('Skill ID already exists')
+        destination = self.store.root/'skills'/ident
+        destination.mkdir()
+        try:
+            for name in ('SKILL.md', 'tools.json'):
+                shutil.copyfile(source/name, destination/name)
+            result = next(s for s in self.skills.list() if s['id'] == ident)
+            if result.get('error'):
+                raise ValueError(result['error'])
+        except BaseException:
+            shutil.rmtree(destination)
+            raise
+        return result

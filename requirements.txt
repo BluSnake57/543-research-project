@@ -1,16 +1,8 @@
-# Runtime dependencies; keep version ranges aligned with pyproject.toml.
-# Install with: python -m pip install -r requirements.txt
-# hnswlib requires matching Python development headers and a C++ compiler.
-# Fedora: sudo dnf install python3-devel gcc-c++
-# Debian/Ubuntu: sudo apt install python3-dev build-essential
+# Install prebuilt dependency wheels; never compile a native dependency from source.
+--only-binary=:all:
 numpy>=2.1,<3
-fastapi>=0.115,<1
-uvicorn>=0.34,<1
-httpx>=0.28,<1
-pydantic>=2.10,<3
-platformdirs>=4.3,<5
+PySide6-Essentials>=6.8,<7
 torch>=2.6,<3
 sentence-transformers>=3.4,<6
-hnswlib>=0.8,<1
-# Install this project's backend and the `veritas` command.
+# This project itself is pure Python and installs in editable mode.
 -e .

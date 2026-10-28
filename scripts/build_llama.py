@@ -8,7 +8,7 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--backend', choices=['cpu', 'cuda', 'metal', 'vulkan'], default='cpu')
 args = parser.parse_args()
-manifest = json.loads((root/'runtime-manifest.json').read_text())
+manifest = json.loads((root/'src/backend/veritas/assets/runtime-manifest.json').read_text())
 source = root/'build/llama-source'
 source.parent.mkdir(exist_ok=True)
 if not (source/'.git').exists():

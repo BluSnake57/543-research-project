@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
-import socket
 import sys
 
 from .state import Store, data_directory
@@ -13,12 +11,8 @@ from .state import Store, data_directory
 def main():
     parser = argparse.ArgumentParser(prog='veritas')
     parser.add_argument('--data-dir', type=Path, default=data_directory())
-    sub = parser.add_subparsers(dest='command', required=True)
-    worker = sub.add_parser('worker')
-    worker.add_argument('--port', type=int, default=0)
-    worker.add_argument('--manifest', type=Path, required=True)
-    worker.add_argument('--skills', type=Path, required=True)
-    worker.add_argument('--runtime', type=Path)
+    sub = parser.add_subparsers(dest='command')
+    sub.add_parser('gui')
     train = sub.add_parser('train')
     train.add_argument('dataset', type=Path)
     train.add_argument('--threshold', type=int, default=100)
@@ -31,18 +25,11 @@ def main():
     predict.add_argument('checkpoint', type=Path)
     index = sub.add_parser('index'); index.add_argument('directory', type=Path)
     args = parser.parse_args()
+    if args.command in (None, 'gui'):
+        from .desktop import main as desktop
+        return desktop(args.data_dir)
     store = Store(args.data_dir)
-    if args.command == 'worker':
-        import uvicorn
-        from .api import create_app
-        token = os.environ.get('VERITAS_WORKER_TOKEN')
-        if not token or len(token) < 32:
-            parser.error('VERITAS_WORKER_TOKEN must contain at least 32 characters')
-        app = create_app(args.data_dir, token, args.manifest, args.skills, args.runtime)
-        sock = socket.socket(); sock.bind(('127.0.0.1', args.port)); sock.listen(128)
-        print(json.dumps({'port': sock.getsockname()[1]}), flush=True)
-        uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False)).run(sockets=[sock])
-    elif args.command == 'train':
+    if args.command == 'train':
         from .graphs import native_twitter
         from .learning import train
         folders = [args.dataset] if (args.dataset/'tree').is_dir() else [

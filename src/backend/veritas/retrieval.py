@@ -1,4 +1,4 @@
-"""Incremental, provenance-preserving hybrid retrieval with a disk-backed HNSW index."""
+"""Incremental, provenance-preserving hybrid retrieval with memory-mapped NumPy vector shards."""
 from __future__ import annotations
 
 import csv
@@ -179,31 +179,33 @@ class Retrieval:
         generation.mkdir()
         try:
             if count:
-                import hnswlib
                 import numpy as np
                 cursor = db.execute('SELECT id,vector FROM chunks WHERE vector IS NOT NULL ORDER BY id')
                 remaining = count
                 while remaining:
                     capacity = min(100_000, remaining)
-                    index = hnswlib.Index(space='cosine', dim=384)
-                    index.init_index(max_elements=capacity, ef_construction=150, M=16, random_seed=42)
+                    target = generation / f'{len(shards)}.npy'
+                    vectors = np.lib.format.open_memmap(target, mode='w+', dtype=np.float32,
+                                                        shape=(capacity, 384))
+                    ids = np.lib.format.open_memmap(target.with_suffix('.ids.npy'), mode='w+',
+                                                    dtype=np.int64, shape=(capacity,))
                     loaded = 0
                     while loaded < capacity:
                         if job:
                             job.check()
                         rows = cursor.fetchmany(min(2048, capacity-loaded))
-                        index.add_items(np.stack([np.frombuffer(r['vector'], dtype=np.float32) for r in rows]),
-                                        [r['id'] for r in rows])
+                        vectors[loaded:loaded+len(rows)] = np.stack([
+                            np.frombuffer(r['vector'], dtype=np.float32) for r in rows])
+                        ids[loaded:loaded+len(rows)] = [r['id'] for r in rows]
                         loaded += len(rows)
-                    target = generation / f'{len(shards)}.hnsw'
-                    index.save_index(str(target))
+                    vectors.flush(); ids.flush()
+                    del vectors, ids
                     shards.append(str(target.relative_to(self.root)))
                     remaining -= loaded
-                    del index
                     if job:
                         job.emit('vector_index', indexed=count-remaining, total=count)
             temporary = self.root / 'vectors-manifest.tmp'
-            temporary.write_text(json.dumps({'shards': shards}))
+            temporary.write_text(json.dumps({'format': 'numpy-v1', 'shards': shards}))
             temporary.replace(manifest)
         except BaseException:
             shutil.rmtree(generation, ignore_errors=True)
@@ -228,19 +230,26 @@ class Retrieval:
                 mode = 'keyword'
                 manifest = self.root / 'vectors.json'
                 if manifest.exists() and self.embedding():
-                    import hnswlib
-                    vector = self.embedding().encode([query], normalize_embeddings=True)
+                    import numpy as np
+                    catalog = json.loads(manifest.read_text())
+                    if catalog.get('format') != 'numpy-v1':
+                        raise ValueError('Reindex resources to migrate the previous semantic index')
+                    vector = np.asarray(self.embedding().encode([query], normalize_embeddings=True)[0],
+                                        dtype=np.float32)
                     candidates = []
-                    for shard in json.loads(manifest.read_text())['shards']:
-                        index = hnswlib.Index(space='cosine', dim=384)
-                        index.load_index(str(self.root/shard)); index.set_ef(80)
-                        count = index.get_current_count()
-                        if count:
-                            labels, distances = index.knn_query(vector, k=min(40, count))
-                            candidates.extend(zip(distances[0].tolist(), labels[0].tolist()))
-                        del index
-                    for i, (_, ident) in enumerate(sorted(candidates)[:40], 1):
-                        ranks[int(ident)] = ranks.get(int(ident), 0) + 1/(60+i)
+                    for shard in catalog['shards']:
+                        target = self.root/shard
+                        vectors = np.load(target, mmap_mode='r', allow_pickle=False)
+                        ids = np.load(target.with_suffix('.ids.npy'), mmap_mode='r', allow_pickle=False)
+                        # Score bounded slices, so a full FEVER index never needs to fit in RAM.
+                        for start in range(0, len(ids), 4096):
+                            similarity = vectors[start:start+4096] @ vector
+                            top = np.argsort(similarity)[-40:]
+                            candidates.extend((float(similarity[i]), int(ids[start+i])) for i in top)
+                            candidates = sorted(candidates, reverse=True)[:40]
+                        del vectors, ids
+                    for i, (_, ident) in enumerate(sorted(candidates, reverse=True)[:40], 1):
+                        ranks[ident] = ranks.get(ident, 0) + 1/(60+i)
                     mode = 'hybrid'
                 result = []
                 for ident in sorted(ranks, key=ranks.get, reverse=True)[:limit]:

@@ -261,7 +261,7 @@ class AssistantTests(TemporaryTest):
         class Job:
             def check(self): pass
             def emit(self, *args, **kwargs): pass
-        skills = Skills([ROOT/'skills'], self.store)
+        skills = Skills([ROOT/'src/backend/veritas/assets/skills'], self.store)
         assistant = Assistant(self.store, retrieval, Runtime(), skills)
         conversation = self.store.create_conversation()['id']
         result = assistant.chat(conversation, 'Does Mars have two moons?', [], Job())
@@ -320,7 +320,7 @@ class RealGraphSAGESmoke(TemporaryTest):
         for item in graphs[:2]:
             self.store.save_graph(item)
         self.store.configure('checkpoint', result['id'])
-        assistant = Assistant(self.store, Retrieval(self.store), None, Skills([ROOT/'skills'], self.store))
+        assistant = Assistant(self.store, Retrieval(self.store), None, Skills([ROOT/'src/backend/veritas/assets/skills'], self.store))
         via_skill = assistant.invoke('graphsage_predict', {'graph_ids': [g['id'] for g in graphs[:2]]},
                                      [g['id'] for g in graphs[:2]], [])
         self.assertEqual(via_skill, outputs)

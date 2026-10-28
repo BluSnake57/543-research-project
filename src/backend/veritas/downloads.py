@@ -188,3 +188,94 @@ class Models:
             download(self.manifest['fever'][name], annotations/f'{name}.jsonl', job=job)
         return {'evidence_directory': str(root), 'annotations_directory': str(annotations),
                 'checksum_policy': 'HTTPS and ZIP CRC; upstream FEVER checksum unavailable'}
+
+
+    def install_runtime(self, job=None):
+        import platform
+        import re
+        import tempfile
+        catalog = self.store.setting('runtime_catalog')
+        if not catalog:
+            release = self.manifest['llama_cpp']['release']
+            base = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/'
+            metadata = get_json(base+release)
+            assets = metadata['assets']
+            if not any('bin-' in item['name'] for item in assets):
+                pointer = next((a for a in assets if a['name'] == 'nightly-tag.txt'), None)
+                if not pointer:
+                    raise ValueError('Release has no precompiled runtime artifacts')
+                with request(pointer['browser_download_url']) as response:
+                    release = response.read(128).decode().strip()
+                if not re.fullmatch(r'b\d+', release):
+                    raise ValueError('Invalid official binary release pointer')
+                metadata = get_json(base+release)
+            asset = runtime_asset(metadata['assets'], platform.system(), platform.machine())
+            digest = asset.get('digest', '')
+            if not digest.startswith('sha256:'):
+                raise ValueError('Official runtime artifact has no SHA-256 digest; choose a verified local executable instead')
+            catalog = {'release': release, 'name': asset['name'], 'url': asset['browser_download_url'],
+                       'checksum': digest[7:], 'size': asset['size']}
+            self.store.configure('runtime_catalog', catalog)
+        cache = self.store.root/'runtime'
+        archive = download(catalog['url'], cache/catalog['name'], catalog['checksum'], catalog['size'], job)
+        if job:
+            job.check()
+        with tempfile.TemporaryDirectory(prefix='unpack-', dir=cache) as temporary:
+            executable = extract_runtime(archive, Path(temporary))
+            relative = executable.relative_to(temporary)
+            destination = cache/'llama'
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(temporary, destination)
+        path = destination/relative
+        self.store.configure('llama_path', str(path))
+        return {'executable': str(path), 'release': catalog['release'], 'precompiled': True}
+
+def runtime_asset(assets, system, machine):
+    """Choose the official CPU/Metal binary, without guessing a download URL."""
+    architecture = {'amd64': 'x64', 'x86_64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}.get(machine.lower())
+    if not architecture:
+        raise ValueError(f'Unsupported runtime architecture: {machine}')
+    names = {'Linux': ('ubuntu', 'linux'), 'Darwin': ('macos',), 'Windows': ('win', 'windows')}.get(system)
+    if not names:
+        raise ValueError(f'Unsupported operating system: {system}')
+    choices = []
+    for asset in assets:
+        name = asset['name'].lower()
+        if not name.endswith(('.zip', '.tar.gz', '.tgz')):
+            continue
+        if not any(part in name for part in names) or architecture not in name:
+            continue
+        if any(part in name for part in ('cuda', 'vulkan', 'sycl', 'rocm', 'hip', 'cudart', 'opencl')):
+            continue
+        choices.append(asset)
+    if not choices:
+        raise ValueError('This release has no compatible precompiled runtime. Choose a local llama-server executable.')
+    return sorted(choices, key=lambda item: ('cpu' not in item['name'].lower(), item['name']))[0]
+
+
+def extract_runtime(archive, directory):
+    import tarfile
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as bundle:
+            for item in bundle.infolist():
+                target = (directory/item.filename).resolve()
+                if not target.is_relative_to(directory):
+                    raise ValueError('Unsafe runtime archive path')
+            if shutil.disk_usage(directory).free < sum(x.file_size for x in bundle.infolist()):
+                raise ValueError('Not enough disk space to unpack runtime')
+            bundle.extractall(directory)
+    else:
+        with tarfile.open(archive) as bundle:
+            if shutil.disk_usage(directory).free < sum(x.size for x in bundle.getmembers()):
+                raise ValueError('Not enough disk space to unpack runtime')
+            bundle.extractall(directory, filter='data')
+    candidates = list(directory.rglob('llama-server')) + list(directory.rglob('llama-server.exe'))
+    if len(candidates) != 1:
+        raise ValueError('Runtime archive must contain one llama-server executable')
+    for path in directory.rglob('*'):
+        if path.is_file() and (path.name.startswith('llama-') or '.so' in path.name or path.suffix == '.dylib'):
+            path.chmod(path.stat().st_mode | 0o755)
+    return candidates[0]

@@ -9,7 +9,7 @@ sys.path.insert(0, str(root/'src/backend'))
 from veritas.downloads import Models
 from veritas.state import Store
 
-manifest = json.loads((root/'runtime-manifest.json').read_text())
+manifest = json.loads((root/'src/backend/veritas/assets/runtime-manifest.json').read_text())
 with tempfile.TemporaryDirectory() as temporary:
     models = Models(Store(Path(temporary)), manifest)
     for key in ('qwen', 'embedding'):

@@ -1,23 +1,16 @@
-name: Checks
+name: Python checks
 on: [push, pull_request, workflow_dispatch]
 jobs:
-  backend:
+  python:
     runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install -e '.[dev]'
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxkbcommon0
+      - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
       - run: ruff check src/backend scripts tests
-  desktop:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm install
-      - run: npm test
-      - run: npm run build

@@ -1,4 +1,4 @@
-name: Build desktop packages
+name: Package native Python desktop
 on:
   workflow_dispatch:
 jobs:
@@ -6,33 +6,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-22.04
-            backend: cpu
-          - os: windows-2022
-            backend: cpu
-          - os: macos-14
-            backend: metal
+        os: [ubuntu-22.04, windows-2022, macos-14]
     runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm libgtk-3-0 libnss3 libasound2
-      - run: python -m pip install -e '.[dev]'
-      - run: npm install
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxkbcommon0
+      - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
-      - run: npm test
       - run: python scripts/lock_manifest.py
-      - run: python scripts/build_llama.py --backend ${{ matrix.backend }}
-      - run: python scripts/package_worker.py
-      - run: npm run make
+      - run: python scripts/package_app.py
       - uses: actions/upload-artifact@v4
         with:
-          name: veritas-${{ matrix.os }}
-          path: out/make/**
+          name: Veritas-${{ matrix.os }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
