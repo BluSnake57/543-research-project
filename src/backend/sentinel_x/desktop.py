@@ -79,12 +79,12 @@ class Window(QMainWindow):
         self.service = service or Service()
         self.conversation = None; self.attached = set(); self.watched = {}; self.reported = set()
         self.dialogs = []; self.latest_jobs = []; self.closed = False
-        self.setWindowTitle('Veritas · Evidence & propagation'); self.resize(1320, 900)
+        self.setWindowTitle('Sentinel-X · Evidence & propagation'); self.resize(1320, 900)
         self.setMinimumSize(1000, 700)
         root = QWidget(); self.setCentralWidget(root); layout = QHBoxLayout(root)
         self.navigation = QListWidget(); self.navigation.setFixedWidth(190)
         self.navigation.addItems(['Conversations', 'Resources', 'Skills', 'Training', 'Models', 'Activity'])
-        left = QVBoxLayout(); left.addWidget(self.heading('VERITAS', 'Local research workspace'))
+        left = QVBoxLayout(); left.addWidget(self.heading('Sentinel-X', 'Local research workspace'))
         left.addWidget(self.navigation); left.addWidget(self.button('Open data directory', self.open_data))
         layout.addLayout(left)
         right = QVBoxLayout(); layout.addLayout(right, 1)
@@ -203,7 +203,7 @@ class Window(QMainWindow):
         pieces = []
         for message in self.service.store.messages(self.conversation):
             if message['role'] == 'tool': continue
-            pieces.append(f'<h4>{"YOU" if message["role"] == "user" else "VERITAS"}</h4><p>{escape(message["content"])}</p>')
+            pieces.append(f'<h4>{"YOU" if message["role"] == "user" else "Sentinel-X"}</h4><p>{escape(message["content"])}</p>')
             data = message['data']
             for claim in data.get('claims', []):
                 pieces.append(f'<blockquote><b>{escape(claim["verdict"].replace("_", " ").upper())}</b><p>{escape(claim["claim"])}</p><p>{escape(claim.get("explanation", ""))}</p><small>{escape(" · ".join(claim["citations"]))}</small></blockquote>')
@@ -495,7 +495,7 @@ QLabel {padding:3px;} QSplitter::handle {background:#30434d;}
 
 def main(root=None):
     application = QApplication.instance() or QApplication(sys.argv[:1])
-    application.setApplicationName('Veritas'); application.setOrganizationName('Veritas')
+    application.setApplicationName('Sentinel-X'); application.setOrganizationName('Sentinel-X')
     application.setStyle('Fusion'); application.setStyleSheet(STYLE)
     window = Window(Service(root)); window.show()
     return application.exec()

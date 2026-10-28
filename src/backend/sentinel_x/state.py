@@ -10,13 +10,21 @@ import uuid
 
 
 def data_directory() -> Path:
-    if os.environ.get('VERITAS_DATA_DIR'):
-        return Path(os.environ['VERITAS_DATA_DIR']).expanduser().resolve()
+    override = os.environ.get('SENTINEL_X_DATA_DIR') or os.environ.get('VERITAS_DATA_DIR')
+    if override:
+        return Path(override).expanduser().resolve()
     if sys.platform == 'win32':
-        return Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'Veritas'
-    if sys.platform == 'darwin':
-        return Path.home() / 'Library/Application Support/Veritas'
-    return Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'veritas'
+        parent = Path(os.environ.get('LOCALAPPDATA', Path.home()))
+        current, legacy = parent/'Sentinel-X', parent/'Veritas'
+    elif sys.platform == 'darwin':
+        parent = Path.home()/'Library/Application Support'
+        current, legacy = parent/'Sentinel-X', parent/'Veritas'
+    else:
+        parent = Path(os.environ.get('XDG_DATA_HOME', Path.home()/'.local/share'))
+        current, legacy = parent/'sentinel-x', parent/'veritas'
+    if not (current/'sentinel-x.sqlite').exists() and (legacy/'veritas.sqlite').exists():
+        return legacy
+    return current
 
 
 class Store:
@@ -39,7 +47,10 @@ class Store:
 
     @contextlib.contextmanager
     def connection(self):
-        db = sqlite3.connect(self.root / 'veritas.sqlite', timeout=30)
+        path = self.root/'sentinel-x.sqlite'
+        if not path.exists() and (self.root/'veritas.sqlite').exists():
+            path = self.root/'veritas.sqlite'
+        db = sqlite3.connect(path, timeout=30)
         db.row_factory = sqlite3.Row
         db.execute('PRAGMA foreign_keys=ON')
         try:

@@ -16,7 +16,7 @@ def request(url, headers=None):
     if urllib.parse.urlparse(url).scheme != 'https':
         raise ValueError('Downloads require HTTPS')
     return urllib.request.urlopen(urllib.request.Request(url, headers={
-        'User-Agent': 'Veritas/0.1', **(headers or {})}), timeout=60)
+        'User-Agent': 'Sentinel-X/0.1', **(headers or {})}), timeout=60)
 
 
 def get_json(url):

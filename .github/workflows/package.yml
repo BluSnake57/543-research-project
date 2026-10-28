@@ -23,7 +23,7 @@ jobs:
       - run: python scripts/package_app.py
       - uses: actions/upload-artifact@v4
         with:
-          name: Veritas-${{ matrix.os }}
+          name: Sentinel-X-${{ matrix.os }}
           path: |
             dist/*.zip
             dist/*.tar.gz

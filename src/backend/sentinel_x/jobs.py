@@ -34,7 +34,7 @@ class Jobs:
     def __init__(self, store):
         self.store = store
         self.live = {}
-        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='veritas-work')
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='sentinel_x-work')
         with store.connection() as db:
             for row in db.execute('SELECT id,data FROM jobs').fetchall():
                 data = json.loads(row['data'])

@@ -2,7 +2,7 @@
 
 ## Verified after the native Python conversion
 
-All 35 Python tests pass with Python 3.14 and installed dependencies; none are skipped.
+All 36 Python tests pass with Python 3.14 and installed dependencies; none are skipped.
 
 - Native PySide6/Qt Widgets window creation, all six navigation pages, conversations, and graph attachments using the offscreen platform plugin.
 - Pure-Python wheel build with bundled assets, followed by native-window startup from an isolated extraction of that wheel.
@@ -27,11 +27,11 @@ Standalone packaging uses PyInstaller on each target OS and prebuilt Python depe
 
 ## Git history
 
-The workspace's `.git` directory is empty and mounted read-only. Milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree and exported to `/tmp/veritas-development.bundle`. An ignored copy named `veritas-development.bundle` is retained at the workspace root.
+The workspace's `.git` directory is empty and mounted read-only. Milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree and exported to `/tmp/sentinel-x-development.bundle`. An ignored copy named `sentinel-x-development.bundle` is retained at the workspace root.
 
 ```bash
-git bundle list-heads veritas-development.bundle
-git clone veritas-development.bundle veritas
+git bundle list-heads sentinel-x-development.bundle
+git clone sentinel-x-development.bundle sentinel-x
 ```
 
 This preserves source history without modifying the protected `.git` directory. The bundle excludes weights, datasets, and generated indexes.

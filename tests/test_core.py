@@ -10,15 +10,15 @@ from unittest.mock import patch
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src/backend'))
-from veritas.assistant import Assistant, validate_answer
-from veritas.downloads import Models, digest_file, download
-from veritas.graphs import (estimate_graph, native_twitter, node_features, normalize_posts,
+from sentinel_x.assistant import Assistant, validate_answer
+from sentinel_x.downloads import Models, digest_file, download
+from sentinel_x.graphs import (estimate_graph, native_twitter, node_features, normalize_posts,
                             observed_prefix, suggest_mapping, validate_graph)
-from veritas.jobs import Jobs
-from veritas.learning import best_cutoff, scores, split_graphs
-from veritas.retrieval import Retrieval
-from veritas.skills import Skills
-from veritas.state import Store
+from sentinel_x.jobs import Jobs
+from sentinel_x.learning import best_cutoff, scores, split_graphs
+from sentinel_x.retrieval import Retrieval
+from sentinel_x.skills import Skills
+from sentinel_x.state import Store
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -179,7 +179,7 @@ class DownloadTests(TemporaryTest):
         target = self.root/'models/example'
         target.with_name('example.part').write_bytes(b'abc')
         expected = hashlib.sha256(b'abcdef').hexdigest()
-        with patch('veritas.downloads.request', return_value=Response(b'def', 206,
+        with patch('sentinel_x.downloads.request', return_value=Response(b'def', 206,
                     {'Content-Range': 'bytes 3-5/6', 'Content-Length': '3'})) as fetch:
             download('https://example.com/model', target, expected, 6)
         self.assertEqual(target.read_bytes(), b'abcdef')
@@ -187,13 +187,13 @@ class DownloadTests(TemporaryTest):
 
     def test_server_ignoring_range_restarts(self):
         target = self.root/'models/example'; target.with_name('example.part').write_bytes(b'abc')
-        with patch('veritas.downloads.request', return_value=Response(b'abcdef')):
+        with patch('sentinel_x.downloads.request', return_value=Response(b'abcdef')):
             download('https://example.com/model', target, hashlib.sha256(b'abcdef').hexdigest(), 6)
         self.assertEqual(target.read_bytes(), b'abcdef')
 
     def test_bad_checksum_removed(self):
         target = self.root/'models/example'
-        with patch('veritas.downloads.request', return_value=Response(b'bad')):
+        with patch('sentinel_x.downloads.request', return_value=Response(b'bad')):
             with self.assertRaisesRegex(ValueError, 'Checksum'):
                 download('https://example.com/model', target, '0'*64, 3)
         self.assertFalse(target.exists())
@@ -208,7 +208,7 @@ class DownloadTests(TemporaryTest):
             def check(self):
                 raise ValueError('cancelled')
         target = self.root/'models/example'
-        with patch('veritas.downloads.request', return_value=Response(b'abcdef')):
+        with patch('sentinel_x.downloads.request', return_value=Response(b'abcdef')):
             with self.assertRaisesRegex(ValueError, 'cancelled'):
                 download('https://example.com/model', target, job=Cancel())
         self.assertFalse(target.exists())
@@ -218,14 +218,14 @@ class DownloadTests(TemporaryTest):
         config = {'qwen': {'repo': 'example/repo', 'revision': 'a'*40,
                            'artifacts': [{'name': 'model', 'checksum': 'b'*64}]}}
         models = Models(self.store, config)
-        with patch('veritas.downloads.get_json', side_effect=AssertionError('Network not allowed')):
+        with patch('sentinel_x.downloads.get_json', side_effect=AssertionError('Network not allowed')):
             self.assertEqual(models.catalog('qwen')['revision'], 'a'*40)
 
     def test_completed_fever_style_download_is_reusable_offline(self):
         target = self.root/'models/archive'
-        with patch('veritas.downloads.request', return_value=Response(b'archive')):
+        with patch('sentinel_x.downloads.request', return_value=Response(b'archive')):
             download('https://example.com/archive.zip', target)
-        with patch('veritas.downloads.request', side_effect=AssertionError('Offline')):
+        with patch('sentinel_x.downloads.request', side_effect=AssertionError('Offline')):
             self.assertEqual(download('https://example.com/archive.zip', target), target)
 
 
@@ -261,7 +261,7 @@ class AssistantTests(TemporaryTest):
         class Job:
             def check(self): pass
             def emit(self, *args, **kwargs): pass
-        skills = Skills([ROOT/'src/backend/veritas/assets/skills'], self.store)
+        skills = Skills([ROOT/'src/backend/sentinel_x/assets/skills'], self.store)
         assistant = Assistant(self.store, retrieval, Runtime(), skills)
         conversation = self.store.create_conversation()['id']
         result = assistant.chat(conversation, 'Does Mars have two moons?', [], Job())
@@ -309,7 +309,7 @@ class JobTests(TemporaryTest):
 @unittest.skipUnless(importlib.util.find_spec('torch'), 'PyTorch is not installed')
 class RealGraphSAGESmoke(TemporaryTest):
     def test_train_checkpoint_and_batch_inference(self):
-        from veritas.learning import predict, train
+        from sentinel_x.learning import predict, train
         graphs = [graph(f'n{i}', 2, 30) for i in range(8)] + [graph(f'p{i}', 8, 20) for i in range(8)]
         result = train(graphs, self.root/'checkpoints', {'threshold': 4, 'window': 60, 'epochs': 3})
         outputs = predict(graphs[:2], self.root/'checkpoints'/f'{result["id"]}.json')
@@ -320,7 +320,7 @@ class RealGraphSAGESmoke(TemporaryTest):
         for item in graphs[:2]:
             self.store.save_graph(item)
         self.store.configure('checkpoint', result['id'])
-        assistant = Assistant(self.store, Retrieval(self.store), None, Skills([ROOT/'src/backend/veritas/assets/skills'], self.store))
+        assistant = Assistant(self.store, Retrieval(self.store), None, Skills([ROOT/'src/backend/sentinel_x/assets/skills'], self.store))
         via_skill = assistant.invoke('graphsage_predict', {'graph_ids': [g['id'] for g in graphs[:2]]},
                                      [g['id'] for g in graphs[:2]], [])
         self.assertEqual(via_skill, outputs)

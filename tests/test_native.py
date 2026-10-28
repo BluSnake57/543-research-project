@@ -11,10 +11,10 @@ import zipfile
 
 import numpy as np
 
-from veritas.config import ASSETS
-from veritas.downloads import extract_runtime, runtime_asset
-from veritas.retrieval import Retrieval
-from veritas.service import Service
+from sentinel_x.config import ASSETS
+from sentinel_x.downloads import extract_runtime, runtime_asset
+from sentinel_x.retrieval import Retrieval
+from sentinel_x.service import Service
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,14 +45,14 @@ class NativeServices(unittest.TestCase):
         self.assertTrue(self.service.skills.tools())
         self.assertFalse((ROOT/'package.json').exists())
         self.assertFalse((ROOT/'src/renderer').exists())
-        self.assertFalse((ROOT/'src/backend/veritas/api.py').exists())
+        self.assertFalse((ROOT/'src/backend/sentinel_x/api.py').exists())
         self.assertIn('--only-binary=:all:', (ROOT/'requirements.txt').read_text())
 
     def test_service_import_conversations_and_estimate_review(self):
         posts = self.root/'posts.json'; posts.write_text(json.dumps([{'id': '1', 'text': 'Mars has two moons.'}]))
         ids = self.service.import_posts(posts)
         graph = self.service.store.graph(ids[0]); self.assertTrue(graph['needs_estimation'])
-        from veritas.graphs import estimate_graph
+        from sentinel_x.graphs import estimate_graph
         proposal = estimate_graph(graph, {'delays': {'1': 0}, 'edges': [], 'assumptions': 'Assumed root time'})
         self.service.store.configure('proposal:'+ids[0], proposal)
         self.assertFalse(self.service.store.graph(ids[0])['accepted'])
@@ -61,6 +61,18 @@ class NativeServices(unittest.TestCase):
         self.assertEqual(self.service.store.conversations()[0]['title'], 'Renamed')
         self.service.delete_conversation(c['id']); self.assertEqual(self.service.store.conversations(), [])
         with self.assertRaises(ValueError): self.service.configure(context=1)
+
+    def test_legacy_database_remains_accessible_after_rename(self):
+        from sentinel_x.state import Store, data_directory
+        root = self.root/'veritas'
+        old = Store(root)
+        conversation = old.create_conversation('Existing research')
+        (root/'sentinel-x.sqlite').rename(root/'veritas.sqlite')
+        reopened = Store(root)
+        self.assertEqual(reopened.conversations()[0]['id'], conversation['id'])
+        self.assertFalse((root/'sentinel-x.sqlite').exists())
+        with patch.dict(os.environ, {'XDG_DATA_HOME': str(self.root)}, clear=True), patch('sys.platform', 'linux'):
+            self.assertEqual(data_directory(), root)
 
     def test_numpy_semantic_index_and_migration(self):
         class Embedding:
@@ -106,8 +118,8 @@ class NativeServices(unittest.TestCase):
         class Response(io.BytesIO):
             status = 200
             headers = {'Content-Length': str(len(payload))}
-        with patch('veritas.downloads.get_json', return_value={'assets': [asset]}), \
-             patch('veritas.downloads.request', return_value=Response(payload)), \
+        with patch('sentinel_x.downloads.get_json', return_value={'assets': [asset]}), \
+             patch('sentinel_x.downloads.request', return_value=Response(payload)), \
              patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='x86_64'):
             result = self.service.models.install_runtime()
         self.assertTrue(result['precompiled'])
@@ -141,7 +153,7 @@ class DesktopSmoke(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_native_window_pages_conversations_and_graph_attachments(self):
-        from veritas.desktop import Window
+        from sentinel_x.desktop import Window
         with tempfile.TemporaryDirectory() as temporary:
             service = Service(Path(temporary)); window = Window(service, auto_setup=False)
             try:

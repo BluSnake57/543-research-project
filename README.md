@@ -1,4 +1,4 @@
-# Veritas
+# Sentinel-X
 
 A **native Python desktop app** for local evidence-based fact checking and GraphSAGE virality prediction. The interface uses Qt Widgets through PySide6 Essentials. There is no JavaScript, Electron, React, npm, browser engine, or application HTTP server.
 
@@ -26,10 +26,10 @@ Install and launch:
 ```bash
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m veritas
+python -m sentinel_x
 ```
 
-`veritas` and `veritas-desktop` are also installed as launch commands. No Node.js or compiler is required for normal setup.
+`sentinel-x` and `sentinel-x-desktop` are also installed as launch commands. No Node.js or compiler is required for normal setup.
 
 **Dependencies use precompiled wheels.** `requirements.txt` enforces `--only-binary=:all:` so pip does not silently compile a native dependency. This repository itself is pure Python and installs in editable mode. If pip reports that no matching binary exists, use a supported 64-bit Python/platform combination rather than installing a compiler. The previous `hnswlib` dependency has been removed; the semantic index now uses precompiled NumPy and memory-mapped vectors. An old environment may retain unused packages, but they are no longer imported or required.
 
@@ -70,12 +70,12 @@ Full FEVER indexing needs substantial disk space and time. Memory-mapped vector 
 ## CLI and tests
 
 ```bash
-veritas train /path/to/datasets --threshold 100 --window 60 --epochs 80 --seed 42
-veritas index /path/to/resources
-veritas predict /path/to/canonical-graphs.json /path/to/checkpoints/MODEL_ID.json
+sentinel-x train /path/to/datasets --threshold 100 --window 60 --epochs 80 --seed 42
+sentinel-x index /path/to/resources
+sentinel-x predict /path/to/canonical-graphs.json /path/to/checkpoints/MODEL_ID.json
 ```
 
-The prediction input is the canonical graph shown in graph details, not raw post JSON. Use `veritas --data-dir /custom/path` before the subcommand to relocate local state.
+The prediction input is the canonical graph shown in graph details, not raw post JSON. Use `sentinel-x --data-dir /custom/path` before the subcommand to relocate local state.
 
 ```bash
 python -m pip install -r requirements-dev.txt
@@ -95,7 +95,7 @@ python scripts/lock_manifest.py
 python scripts/package_app.py
 ```
 
-PyInstaller freezes the Python application and installed binary libraries. This packages existing code; it does not compile PyTorch, Qt, or a C++ runtime from source. Output is a Windows ZIP containing `Veritas.exe` and supporting files, a macOS ZIP containing `Veritas.app`, or a Linux tarball containing the executable and libraries. Keep the entire extracted application directory together. End users do not need Python.
+PyInstaller freezes the Python application and installed binary libraries. This packages existing code; it does not compile PyTorch, Qt, or a C++ runtime from source. Output is a Windows ZIP containing `Sentinel-X.exe` and supporting files, a macOS ZIP containing `Sentinel-X.app`, or a Linux tarball containing the executable and libraries. Keep the entire extracted application directory together. End users do not need Python.
 
 The packaged app downloads the precompiled runtime and models on first launch. To bundle an existing runtime instead, use `python scripts/package_app.py --llama-dir /path/to/precompiled/binaries`. No CMake step is needed for normal packaging. `scripts/build_llama.py` remains an optional developer tool for custom accelerated source builds.
 
@@ -103,8 +103,10 @@ The packaged app downloads the precompiled runtime and models on first launch. T
 
 ## Source and local data
 
-Application code lives in `src/backend/veritas`: `desktop.py` is the Qt UI and `service.py` directly connects it to inference, retrieval, skills, and training. Bundled configuration and the GraphSAGE skill are package assets under `src/backend/veritas/assets`. Tests, build scripts, and documentation are in `tests`, `scripts`, and `docs`.
+Application code lives in `src/backend/sentinel_x`: `desktop.py` is the Qt UI and `service.py` directly connects it to inference, retrieval, skills, and training. Bundled configuration and the GraphSAGE skill are package assets under `src/backend/sentinel_x/assets`. Tests, build scripts, and documentation are in `tests`, `scripts`, and `docs`.
 
-Local conversations, resources, model catalogs, checkpoints, indexes, and logs use the platform application-data directory. Open it from the sidebar or set `VERITAS_DATA_DIR` to override it. Existing conversations/checkpoints remain compatible. Reindex an older HNSW evidence index to migrate it to NumPy shards.
+Local conversations, resources, model catalogs, checkpoints, indexes, and logs use the platform application-data directory. Open it from the sidebar or set `SENTINEL_X_DATA_DIR` to override it. Existing conversations/checkpoints remain compatible. Reindex an older HNSW evidence index to migrate it to NumPy shards.
+
+When upgrading from the former Veritas name, Sentinel-X automatically reuses an existing legacy data directory/database. The former `VERITAS_DATA_DIR` override is also recognized; `SENTINEL_X_DATA_DIR` takes precedence.
 
 Keep weights, datasets, credentials, and generated indexes out of Git. `AGENTS.md` remains unchanged. [Skill authoring](docs/SKILLS.md) describes the supported extension format.

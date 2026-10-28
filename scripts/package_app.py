@@ -10,15 +10,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--llama-dir', type=Path, help='Optional directory of existing precompiled llama.cpp binaries')
 args = parser.parse_args()
 command = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir', '--windowed',
-           '--name', 'Veritas', '--paths', str(ROOT/'src/backend'),
-           '--collect-data', 'veritas', '--collect-all', 'sentence_transformers',
+           '--name', 'Sentinel-X', '--paths', str(ROOT/'src/backend'),
+           '--collect-data', 'sentinel_x', '--collect-all', 'sentence_transformers',
            '--collect-all', 'transformers', '--collect-all', 'tokenizers',
            '--distpath', str(ROOT/'dist'), '--workpath', str(ROOT/'build/pyinstaller'),
            '--specpath', str(ROOT/'build'), str(ROOT/'scripts/desktop_entry.py')]
 subprocess.run(command, check=True, cwd=ROOT)
-output = ROOT/'dist/Veritas'
+output = ROOT/'dist/Sentinel-X'
 if sys.platform == 'darwin':
-    output = ROOT/'dist/Veritas.app/Contents/MacOS'
+    output = ROOT/'dist/Sentinel-X.app/Contents/MacOS'
 if args.llama_dir:
     server = 'llama-server.exe' if sys.platform == 'win32' else 'llama-server'
     if not any(args.llama_dir.rglob(server)):
@@ -29,9 +29,9 @@ if release.exists():
     shutil.copy2(release, output/'runtime-manifest.json')
 archive_root = ROOT/'dist'
 if sys.platform == 'darwin':
-    shutil.make_archive(str(ROOT/'dist/Veritas-macOS'), 'zip', archive_root, 'Veritas.app')
+    shutil.make_archive(str(ROOT/'dist/Sentinel-X-macOS'), 'zip', archive_root, 'Sentinel-X.app')
 elif sys.platform == 'win32':
-    shutil.make_archive(str(ROOT/'dist/Veritas-Windows'), 'zip', archive_root, 'Veritas')
+    shutil.make_archive(str(ROOT/'dist/Sentinel-X-Windows'), 'zip', archive_root, 'Sentinel-X')
 else:
-    shutil.make_archive(str(ROOT/'dist/Veritas-Linux'), 'gztar', archive_root, 'Veritas')
+    shutil.make_archive(str(ROOT/'dist/Sentinel-X-Linux'), 'gztar', archive_root, 'Sentinel-X')
 print(f'Packaged native application in {output}')

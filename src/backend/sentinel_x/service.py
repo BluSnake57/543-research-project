@@ -149,8 +149,8 @@ class Service:
         rows = read_posts(Path(path)); mapping = mapping or suggest_mapping(rows)
         if combine:
             for row in rows:
-                row['__veritas_cascade'] = 'bundle'
-            mapping = {**mapping, 'cascade_id': '__veritas_cascade'}
+                row['__sentinel_x_cascade'] = 'bundle'
+            mapping = {**mapping, 'cascade_id': '__sentinel_x_cascade'}
         graphs = normalize_posts(rows, mapping, str(path))
         for graph in graphs:
             self.store.save_graph(graph)

@@ -22,7 +22,7 @@ A skill is a directory with `SKILL.md` instructions and a `tools.json` manifest.
 }
 ```
 
-The bundled example is `src/backend/veritas/assets/skills/graphsage`. Supported handler/function bindings are:
+The bundled example is `src/backend/sentinel_x/assets/skills/graphsage`. Supported handler/function bindings are:
 
 | Handler | Qwen function | Arguments |
 | --- | --- | --- |

@@ -9,7 +9,7 @@ from .state import Store, data_directory
 
 
 def main():
-    parser = argparse.ArgumentParser(prog='veritas')
+    parser = argparse.ArgumentParser(prog='sentinel-x')
     parser.add_argument('--data-dir', type=Path, default=data_directory())
     sub = parser.add_subparsers(dest='command')
     sub.add_parser('gui')

@@ -6,10 +6,10 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root/'src/backend'))
-from veritas.downloads import Models
-from veritas.state import Store
+from sentinel_x.downloads import Models
+from sentinel_x.state import Store
 
-manifest = json.loads((root/'src/backend/veritas/assets/runtime-manifest.json').read_text())
+manifest = json.loads((root/'src/backend/sentinel_x/assets/runtime-manifest.json').read_text())
 with tempfile.TemporaryDirectory() as temporary:
     models = Models(Store(Path(temporary)), manifest)
     for key in ('qwen', 'embedding'):
