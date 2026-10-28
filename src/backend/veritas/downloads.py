@@ -93,6 +93,11 @@ class Models:
         if pinned.exists():
             return json.loads(pinned.read_text())
         config = self.manifest[key]
+        if config.get('artifacts'):
+            data = {'repo': config['repo'], 'revision': config['revision'],
+                    'files': config['artifacts']}
+            pinned.write_text(json.dumps(data, indent=2))
+            return data
         repo = config['repo']; revision = config['revision']
         if not revision:
             revision = get_json(f'https://huggingface.co/api/models/{repo}')['sha']

@@ -80,6 +80,13 @@ def create_app(root: Path, token: str, manifest_path: Path, skills_path: Path, r
     def health():
         return {'ready': True, 'version': '0.1.0'}
 
+    @app.post('/v1/shutdown')
+    def shutdown():
+        for job in jobs.live.values():
+            job.cancelled.set()
+        runtime.stop()
+        return {'stopping': True}
+
     @app.get('/v1/status')
     def status():
         executable, model = runtime.configured()

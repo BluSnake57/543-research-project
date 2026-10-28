@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
@@ -64,7 +65,7 @@ class Retrieval:
         self.path = self.root / 'evidence.sqlite'
         self.lock = threading.RLock()
         self.embedder = None
-        with self.connection() as db:
+        with closing(self.connection()) as db, db:
             db.executescript('''
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, hash TEXT, root TEXT);
@@ -84,7 +85,7 @@ class Retrieval:
 
     def embedding(self):
         path = self.store.root / 'models' / 'embedding'
-        if not (path / 'config.json').exists():
+        if not (path / '.ready').exists():
             return None
         if self.embedder is None:
             from sentence_transformers import SentenceTransformer
@@ -106,12 +107,15 @@ class Retrieval:
                         job.check()
                     if not path.is_file() or path.is_symlink():
                         continue
+                    if path.name.endswith('.checksum.json') or path.name == 'wiki-pages.zip':
+                        continue
                     if path.suffix.lower() not in EXTENSIONS:
                         result['errors'].append({'path': str(path), 'error': 'Unsupported file type'})
                         continue
                     name = str(path.resolve()); seen.add(name)
                     try:
-                        digest = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
+                        with path.open('rb') as stream:
+                            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
                         previous = db.execute('SELECT hash FROM files WHERE path=?', (name,)).fetchone()
                         missing_vectors = db.execute('SELECT 1 FROM chunks WHERE path=? AND vector IS NULL LIMIT 1', (name,)).fetchone()
                         if previous and previous[0] == digest and not (embedding and missing_vectors):

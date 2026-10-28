@@ -2,7 +2,7 @@ const fs = require('node:fs');
 module.exports = {
   packagerConfig: {
     asar: true, executableName: 'Veritas',
-    extraResource: ['build/worker', 'skills', 'runtime-manifest.json'],
+    extraResource: ['build/worker', 'skills', 'build/runtime-manifest.json'],
     osxSign: process.env.APPLE_IDENTITY ? {identity: process.env.APPLE_IDENTITY} : undefined,
     osxNotarize: process.env.APPLE_ID ? {appleId: process.env.APPLE_ID, appleIdPassword: process.env.APPLE_PASSWORD, teamId: process.env.APPLE_TEAM_ID} : undefined,
     ignore: [/^\/src/, /^\/tests/, /^\/\.venv/, /^\/resources/, /^\/docs/, /^\/build/]
