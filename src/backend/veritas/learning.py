@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import random
 import uuid
@@ -71,15 +72,38 @@ def best_cutoff(labels, probabilities):
 def torch_modules():
     try:
         import torch
-        from torch_geometric.nn import SAGEConv, global_mean_pool
     except ImportError as exc:
-        raise RuntimeError('Training requires torch and torch-geometric; install the backend dependencies') from exc
+        raise RuntimeError('Training requires PyTorch; install the backend dependencies') from exc
+
+    class SAGEConv(torch.nn.Module):
+        """Mean GraphSAGE: W_neighbor mean(neighbors) + W_root x, without optional extensions."""
+        def __init__(self, inputs, outputs):
+            super().__init__()
+            self.neighbor = torch.nn.Linear(inputs, outputs)
+            self.root = torch.nn.Linear(inputs, outputs, bias=False)
+
+        def forward(self, x, edges):
+            neighbors = torch.zeros_like(x)
+            degrees = torch.zeros((len(x), 1), dtype=x.dtype, device=x.device)
+            if edges.shape[1]:
+                source, destination = edges
+                neighbors.index_add_(0, destination, x[source])
+                degrees.index_add_(0, destination, torch.ones((len(destination), 1),
+                                                             dtype=x.dtype, device=x.device))
+            return self.neighbor(neighbors / degrees.clamp(min=1)) + self.root(x)
+
+    def global_mean_pool(x, batch):
+        count = int(batch.max()) + 1
+        pooled = torch.zeros((count, x.shape[1]), dtype=x.dtype, device=x.device)
+        pooled.index_add_(0, batch, x)
+        sizes = torch.bincount(batch, minlength=count).to(x.dtype).clamp(min=1)
+        return pooled / sizes.unsqueeze(1)
 
     class GraphSAGE(torch.nn.Module):
         def __init__(self, hidden=32):
             super().__init__()
-            self.conv1 = SAGEConv(6, hidden, aggr='mean')
-            self.conv2 = SAGEConv(hidden, hidden, aggr='mean')
+            self.conv1 = SAGEConv(6, hidden)
+            self.conv2 = SAGEConv(hidden, hidden)
             self.head = torch.nn.Linear(hidden, 1)
 
         def forward(self, x, edges, batch):
@@ -104,7 +128,7 @@ def tensor_graph(torch, graph, window, mean, scale, device):
 def train(graphs, output: Path, config=None, job=None):
     config = {'threshold': 100, 'window': 60., 'epochs': 80, 'seed': 42,
               'hidden': 32, 'learning_rate': .003, 'device': 'cpu', **(config or {})}
-    if config['threshold'] < 2 or config['window'] <= 0 or not 1 <= config['epochs'] <= 2000:
+    if config['threshold'] < 2 or not math.isfinite(config['window']) or config['window'] <= 0 or not 1 <= config['epochs'] <= 2000:
         raise ValueError('Require threshold >=2, positive window, and 1–2000 epochs')
     if config['device'] not in ('cpu', 'cuda', 'mps'):
         raise ValueError('Device must be cpu, cuda, or mps')

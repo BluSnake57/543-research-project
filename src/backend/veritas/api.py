@@ -273,10 +273,21 @@ def create_app(root: Path, token: str, manifest_path: Path, skills_path: Path, r
     @app.post('/v1/posts/map')
     def map_posts(body: PathInput):
         rows = read_posts(Path(body.path))
-        return {'job_id': jobs.submit('map-posts', lambda job: runtime.structured(
-            'Map these post fields to id,text,author_id,timestamp,parent_id,cascade_id. '
-            'Return {"mapping":{"id":"actual_field",...}}; use null for missing fields. '
-            'Do not invent values. Samples:\n'+json.dumps(rows[:3])[:10000], job))}
+        def work(job):
+            result = runtime.structured(
+                'Map these post fields to id,text,author_id,timestamp,parent_id,cascade_id. '
+                'Return {"mapping":{"id":"actual_field",...}}; use null for missing fields. '
+                'Do not invent values. Samples:\n'+json.dumps(rows[:3])[:10000], job)
+            mapping = result.get('mapping')
+            allowed = suggest_mapping(rows)
+            keys = set().union(*(r.keys() for r in rows[:100]))
+            if not isinstance(mapping, dict) or set(mapping) != set(allowed):
+                raise ValueError('Qwen returned an incomplete field mapping')
+            if any(value is not None and (not isinstance(value, str) or value not in keys)
+                   for value in mapping.values()):
+                raise ValueError('Qwen mapped a field that is absent from the input')
+            return result
+        return {'job_id': jobs.submit('map-posts', work)}
 
     @app.post('/v1/posts/import')
     def import_posts(body: PostInput):
@@ -299,6 +310,7 @@ def create_app(root: Path, token: str, manifest_path: Path, skills_path: Path, r
             raise ValueError('Choose a twitter15/twitter16 directory or their parent directory')
         def work(job):
             result = {'imported': 0, 'errors': []}
+            existing_events = {(g['source'], g['cascade_id']): g['id'] for g in store.graphs()}
             for folder in directories:
                 for graph in native_twitter(folder):
                     job.check()
@@ -306,10 +318,9 @@ def create_app(root: Path, token: str, manifest_path: Path, skills_path: Path, r
                         result['errors'].append(graph['error'])
                     else:
                         # Re-importing replaces the existing event rather than duplicating it.
-                        existing = next((g for g in store.graphs() if g['source'] == folder.name and
-                                         g['cascade_id'] == graph['cascade_id']), None)
+                        existing = existing_events.get((folder.name, graph['cascade_id']))
                         if existing:
-                            graph['id'] = existing['id']
+                            graph['id'] = existing
                         store.save_graph(graph); result['imported'] += 1
                     if result['imported'] % 25 == 0:
                         job.emit('importing', **result)

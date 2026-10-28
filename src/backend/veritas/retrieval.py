@@ -168,23 +168,52 @@ class Retrieval:
         return result
 
     def rebuild_vectors(self, db, job=None):
+        # Persist bounded-size shards rather than allocating the entire FEVER index in RAM.
+        import shutil
+        import uuid
         count = db.execute('SELECT count(*) FROM chunks WHERE vector IS NOT NULL').fetchone()[0]
-        target = self.root / 'vectors.hnsw'
-        if not count:
-            target.unlink(missing_ok=True)
-            return
-        import hnswlib
-        import numpy as np
-        index = hnswlib.Index(space='cosine', dim=384)
-        index.init_index(max_elements=count, ef_construction=150, M=16, random_seed=42)
-        cursor = db.execute('SELECT id,vector FROM chunks WHERE vector IS NOT NULL')
-        while rows := cursor.fetchmany(2048):
-            if job:
-                job.check()
-            index.add_items(np.stack([np.frombuffer(r['vector'], dtype=np.float32) for r in rows]),
-                            [r['id'] for r in rows])
-        temporary = self.root / 'vectors.tmp'
-        index.save_index(str(temporary)); temporary.replace(target)
+        manifest = self.root / 'vectors.json'
+        old = json.loads(manifest.read_text()) if manifest.exists() else {'shards': []}
+        shards = []
+        generation = self.root / ('vectors-' + uuid.uuid4().hex)
+        generation.mkdir()
+        try:
+            if count:
+                import hnswlib
+                import numpy as np
+                cursor = db.execute('SELECT id,vector FROM chunks WHERE vector IS NOT NULL ORDER BY id')
+                remaining = count
+                while remaining:
+                    capacity = min(100_000, remaining)
+                    index = hnswlib.Index(space='cosine', dim=384)
+                    index.init_index(max_elements=capacity, ef_construction=150, M=16, random_seed=42)
+                    loaded = 0
+                    while loaded < capacity:
+                        if job:
+                            job.check()
+                        rows = cursor.fetchmany(min(2048, capacity-loaded))
+                        index.add_items(np.stack([np.frombuffer(r['vector'], dtype=np.float32) for r in rows]),
+                                        [r['id'] for r in rows])
+                        loaded += len(rows)
+                    target = generation / f'{len(shards)}.hnsw'
+                    index.save_index(str(target))
+                    shards.append(str(target.relative_to(self.root)))
+                    remaining -= loaded
+                    del index
+                    if job:
+                        job.emit('vector_index', indexed=count-remaining, total=count)
+            temporary = self.root / 'vectors-manifest.tmp'
+            temporary.write_text(json.dumps({'shards': shards}))
+            temporary.replace(manifest)
+        except BaseException:
+            shutil.rmtree(generation, ignore_errors=True)
+            raise
+        for name in old['shards']:
+            old_directory = (self.root/name).parent
+            if old_directory != self.root:
+                shutil.rmtree(old_directory, ignore_errors=True)
+        if not shards:
+            generation.rmdir()
 
     def search(self, query, limit=8):
         words = re.findall(r'\w+', query, flags=re.UNICODE)[:32]
@@ -197,16 +226,22 @@ class Retrieval:
                                   (' OR '.join('"'+w+'"' for w in words),)).fetchall()
                 ranks = {r[0]: 1/(60+i) for i, r in enumerate(rows, 1)}
                 mode = 'keyword'
-                if (self.root / 'vectors.hnsw').exists() and self.embedding():
+                manifest = self.root / 'vectors.json'
+                if manifest.exists() and self.embedding():
                     import hnswlib
-                    index = hnswlib.Index(space='cosine', dim=384)
-                    index.load_index(str(self.root / 'vectors.hnsw')); index.set_ef(80)
-                    count = index.get_current_count()
-                    if count:
-                        labels, _ = index.knn_query(self.embedding().encode([query], normalize_embeddings=True), k=min(40, count))
-                        for i, ident in enumerate(labels[0], 1):
-                            ranks[int(ident)] = ranks.get(int(ident), 0) + 1/(60+i)
-                        mode = 'hybrid'
+                    vector = self.embedding().encode([query], normalize_embeddings=True)
+                    candidates = []
+                    for shard in json.loads(manifest.read_text())['shards']:
+                        index = hnswlib.Index(space='cosine', dim=384)
+                        index.load_index(str(self.root/shard)); index.set_ef(80)
+                        count = index.get_current_count()
+                        if count:
+                            labels, distances = index.knn_query(vector, k=min(40, count))
+                            candidates.extend(zip(distances[0].tolist(), labels[0].tolist()))
+                        del index
+                    for i, (_, ident) in enumerate(sorted(candidates)[:40], 1):
+                        ranks[int(ident)] = ranks.get(int(ident), 0) + 1/(60+i)
+                    mode = 'hybrid'
                 result = []
                 for ident in sorted(ranks, key=ranks.get, reverse=True)[:limit]:
                     row = db.execute('SELECT * FROM chunks WHERE id=?', (ident,)).fetchone()

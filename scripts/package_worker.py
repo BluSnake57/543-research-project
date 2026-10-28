@@ -14,7 +14,7 @@ if not (args.llama_dir/server).exists():
     parser.error('Build llama.cpp first with scripts/build_llama.py or pass --llama-dir')
 subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir',
     '--name', 'veritas-worker', '--paths', str(ROOT/'src/backend'),
-    '--collect-all', 'torch_geometric', '--collect-all', 'sentence_transformers',
+    '--collect-all', 'sentence_transformers',
     '--collect-all', 'transformers', '--collect-all', 'tokenizers',
     '--collect-all', 'hnswlib', '--collect-submodules', 'uvicorn',
     '--distpath', str(ROOT/'build/frozen'), '--workpath', str(ROOT/'build/pyinstaller'),

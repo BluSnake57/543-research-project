@@ -70,7 +70,11 @@ class Llama:
             deadline = time.monotonic()+240
             while time.monotonic() < deadline and self.process.poll() is None:
                 if job:
-                    job.check()
+                    try:
+                        job.check()
+                    except BaseException:
+                        self.stop()
+                        raise
                 try:
                     self.call('/health', method='GET', timeout=2)
                     if job:
@@ -101,6 +105,13 @@ class Llama:
                    'chat_template_kwargs': {'enable_thinking': False}}
         if tools:
             payload.update(tools=tools, tool_choice='auto')
+        template = self.call('/apply-template', {'messages': messages, 'tools': tools,
+                              'add_generation_prompt': True,
+                              'chat_template_kwargs': {'enable_thinking': False}})
+        tokenized = self.call('/tokenize', {'content': template['prompt'],
+                                          'add_special': False, 'parse_special': True})
+        if len(tokenized['tokens']) + payload['max_tokens'] > int(self.store.setting('context', 8192)):
+            raise ValueError('Request exceeds the configured context. Reduce attachments or increase context in Models.')
         req = urllib.request.Request(f'http://127.0.0.1:{self.port}/v1/chat/completions',
             data=json.dumps(payload).encode(),
             headers={'Authorization': f'Bearer {self.key}', 'Content-Type': 'application/json'})

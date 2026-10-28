@@ -26,16 +26,21 @@ def validate_answer(content, evidence):
     if not isinstance(claims, list):
         raise ValueError('Invalid claim list')
     allowed = {e['citation'] for e in evidence}
+    downgraded = False
     for claim in claims:
         if not isinstance(claim, dict) or not isinstance(claim.get('claim'), str):
             raise ValueError('Invalid claim result')
-        claim['citations'] = [c for c in claim.get('citations', []) if c in allowed]
+        citations = claim.get('citations', [])
+        claim['citations'] = [c for c in citations if isinstance(c, str) and c in allowed] if isinstance(citations, list) else []
         if claim.get('verdict') not in ('supported', 'refuted', 'insufficient_evidence'):
             claim['verdict'] = 'insufficient_evidence'
         if not claim['citations']:
+            downgraded = downgraded or claim['verdict'] != 'insufficient_evidence'
             claim['verdict'] = 'insufficient_evidence'
             claim['explanation'] = 'No valid retrieved evidence citation supports a determination.'
-    return {'summary': value['summary'], 'claims': claims}
+    summary = ('The available local evidence is insufficient to determine one or more claims. '
+               'Review the assessments and retrieved excerpts below.') if downgraded else value['summary']
+    return {'summary': summary, 'claims': claims}
 
 
 class Assistant:
@@ -83,8 +88,9 @@ class Assistant:
         posts = [{'graph_id': g['id'], 'cascade_id': g['cascade_id'],
                   'estimated': g.get('estimated'), 'accepted': g.get('accepted'),
                   'needs_estimation': g.get('needs_estimation'),
-                  'posts': [{'id': n['id'], 'text': n.get('text', '')[:1200]} for n in g['nodes'][:20]]}
-                 for g in attached[:20]]
+                  'posts': [{'id': n['id'], 'text': n.get('text', '')}
+                            for n in g['nodes'] if n.get('text')]}
+                 for g in attached]
         query = text+' '+ ' '.join(n.get('text', '')[:400] for g in graphs for n in g['nodes'][:4])
         evidence = self.retrieval.search(query)
         system = SYSTEM + '\n'+self.skills.instructions()+ '\nImported graph references:\n'+json.dumps(posts)

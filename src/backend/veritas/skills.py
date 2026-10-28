@@ -21,6 +21,10 @@ class Skills:
                             raise ValueError('Unknown tool handler; skill files cannot register executable code')
                         if tool['function']['name'] not in ('graphsage_predict', 'evidence_search'):
                             raise ValueError('Unknown tool function')
+                        binding = {'graphsage.predict': 'graphsage_predict',
+                                   'retrieval.search': 'evidence_search'}
+                        if binding[tool['handler']] != tool['function']['name']:
+                            raise ValueError('Tool function does not match its registered handler')
                     data.update(path=str(manifest.parent),
                         instructions=(manifest.parent/'SKILL.md').read_text(encoding='utf-8'),
                         enabled=self.store.setting('skill:'+data['id'], True))

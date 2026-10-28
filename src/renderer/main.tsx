@@ -36,6 +36,7 @@ function App() {
   const [live, setLive] = useState('');
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [jobDetail, setJobDetail] = useState<Json>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const setupStarted = useRef(false);
   const currentConversation = useRef(conversation);
   const liveSeq = useRef<Record<string, number>>({});
@@ -154,7 +155,7 @@ function App() {
       {view === 'Conversations' && <div className="conversation-layout">
         <section className="chat-panel">
           <div className="chat-toolbar"><span>{conversations.find(c => c.id === conversation)?.title || 'New conversation'}</span><div className="row">
-            {conversation && <><button className="link" onClick={() => void action(async () => {const title = window.prompt('Conversation name'); if (title) {await api('PATCH', `/v1/conversations/${conversation}`, {title}); await refresh();}})}>Rename</button>
+            {conversation && <><button className="link" onClick={() => setRenaming(conversations.find(c => c.id === conversation)?.title || '')}>Rename</button>
             <button className="link danger" onClick={() => void action(async () => {if (window.confirm('Delete this conversation and its messages?')) {await api('DELETE', `/v1/conversations/${conversation}`); setConversation(''); await refresh();}})}>Delete</button></>}
           </div></div>
           <div className="messages" aria-live="polite">
@@ -179,6 +180,7 @@ function App() {
     {importing && <Modal title="Map your post dataset" close={() => setImporting(null)}><p>{importing.count} records · {importing.path}</p><div className="field-grid">{Object.keys(importing.mapping).map(field => <label key={field}>{field}<select value={importing.mapping[field] || ''} onChange={e => setImporting({...importing, mapping: {...importing.mapping, [field]: e.target.value || null}})}><option value="">Missing</option>{Object.keys(importing.sample[0]).map(key => <option key={key}>{key}</option>)}</select></label>)}</div><label className="row"><input type="checkbox" checked={combine} onChange={e => setCombine(e.target.checked)}/>Group these posts as one cascade for graph estimation</label><details><summary>Preview source records</summary><pre>{json(importing.sample)}</pre></details><div className="row"><button disabled={busy} onClick={() => void action(async () => {const j = await api('POST', '/v1/posts/map', {path: importing.path}); const result = await waitFor(j.job_id); setImporting({...importing, mapping: result.mapping});})}>Ask Qwen to map fields</button><button className="primary" disabled={busy} onClick={() => void action(confirmImport)}>Import posts</button></div></Modal>}
     {inspecting && <Modal title={'Cascade '+inspecting.cascade_id} close={() => {setInspecting(null); setProposal(null);}}><p>{inspecting.nodes.length} posts · {inspecting.edges.length} observed/accepted links</p>{inspecting.warnings.map((w: string) => <p className="warning-text" key={w}>{w}</p>)}<details open><summary>{proposal ? 'Estimated graph proposal — review before accepting' : 'Current graph'}</summary><pre>{json(proposal || inspecting)}</pre></details>{proposal ? <><div className="alert">These links and/or timestamps are estimates. Predictions are experimental and are not validated as observed propagation forecasts.</div><button className="primary" onClick={() => void action(async () => {await api('POST', `/v1/graphs/${inspecting.id}/accept`, {accept: true}); setInspecting(null); setProposal(null); await refresh();})}>Accept this estimated graph</button></> : inspecting.needs_estimation && <button disabled={busy} onClick={() => void action(async () => {const j = await api('POST', `/v1/graphs/${inspecting.id}/estimate`, {}); setProposal(await waitFor(j.job_id));})}>Ask Qwen to propose missing metadata</button>}</Modal>}
     {jobDetail && <Modal title={jobDetail.kind+' · '+jobDetail.status} close={() => setJobDetail(null)}><pre>{json(jobDetail)}</pre></Modal>}
+    {renaming !== null && <Modal title="Rename conversation" close={() => setRenaming(null)}><form onSubmit={e => {e.preventDefault(); void action(async () => {await api('PATCH', `/v1/conversations/${conversation}`, {title: renaming}); setRenaming(null); await refresh();});}}><input aria-label="Conversation name" value={renaming} onChange={e => setRenaming(e.target.value)} maxLength={200}/><button type="submit" className="primary">Save name</button></form></Modal>}
   </div>;
 }
 

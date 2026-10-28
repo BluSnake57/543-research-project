@@ -281,8 +281,7 @@ class JobTests(TemporaryTest):
         self.assertEqual(Jobs(self.store).get(ident)['status'], 'completed')
 
 
-@unittest.skipUnless(importlib.util.find_spec('torch') and importlib.util.find_spec('torch_geometric'),
-                     'torch and torch-geometric are not installed')
+@unittest.skipUnless(importlib.util.find_spec('torch'), 'PyTorch is not installed')
 class RealGraphSAGESmoke(TemporaryTest):
     def test_train_checkpoint_and_batch_inference(self):
         from veritas.learning import predict, train
