@@ -124,6 +124,10 @@ class Service:
         with self.store.connection() as db:
             db.execute('UPDATE conversations SET title=? WHERE id=?', (title[:200], ident))
 
+    def export(self, ident, path):
+        from .exporting import export_conversation
+        return export_conversation(self.store, ident, path)
+
     def delete_conversation(self, ident):
         if any(j.data['kind'] == f'chat:{ident}' and j.data['status'] in ('queued', 'running')
                for j in self.jobs.live.values()):

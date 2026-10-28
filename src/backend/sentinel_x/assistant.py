@@ -1,4 +1,5 @@
 import json
+import uuid
 
 from . import learning
 
@@ -8,7 +9,8 @@ Separate factual support from virality. A viral claim need not be true and a tru
 Use supplied citation IDs when evidence supports a verdict. Without sufficient cited evidence, use insufficient_evidence.
 Wikipedia/FEVER is historical evidence; do not claim it verifies present-day conditions.
 Use graphsage_predict for virality requests; never invent probabilities or observed graph structure.
-Final answer MUST be a JSON object: {"summary":"plain language answer", "claims":[
+Final answer MUST be a JSON object: {"summary":"plain language answer",
+"reasoning_summary":"brief explanation of the evidence and method behind your answer, not private deliberation", "claims":[
 {"claim":"one checkable statement", "verdict":"supported|refuted|insufficient_evidence",
 "explanation":"reason", "citations":["E123"]}]}. Use an empty claims array for ordinary chat.
 For bundles identify individual checkable claims. Mention estimated-graph warnings in your summary.
@@ -40,7 +42,9 @@ def validate_answer(content, evidence):
             claim['explanation'] = 'No valid retrieved evidence citation supports a determination.'
     summary = ('The available local evidence is insufficient to determine one or more claims. '
                'Review the assessments and retrieved excerpts below.') if downgraded else value['summary']
-    return {'summary': summary, 'claims': claims}
+    reasoning = value.get('reasoning_summary', '')
+    return {'summary': summary, 'claims': claims,
+            'reasoning_summary': reasoning if isinstance(reasoning, str) else ''}
 
 
 class Assistant:
@@ -79,7 +83,9 @@ class Assistant:
         graph_ids = list(dict.fromkeys(graph_ids))
         graphs = [self.store.graph(ident) for ident in graph_ids]
         prior = self.store.messages(conversation)
-        self.store.message(conversation, 'user', text, {'graph_ids': graph_ids})
+        turn_id = uuid.uuid4().hex
+        user_data = {'graph_ids': graph_ids, 'turn_id': turn_id}
+        user_message = self.store.message(conversation, 'user', text, user_data)
         # Attachments remain in scope on follow-up turns, without leaking other conversations.
         allowed = set(graph_ids)
         for message in prior:
@@ -93,7 +99,9 @@ class Assistant:
                  for g in attached]
         query = text+' '+ ' '.join(n.get('text', '')[:400] for g in graphs for n in g['nodes'][:4])
         evidence = self.retrieval.search(query)
-        system = SYSTEM + '\n'+self.skills.instructions()+ '\nImported graph references:\n'+json.dumps(posts)
+        instructions = self.skills.instructions()
+        tools = self.skills.tools()
+        system = SYSTEM + '\n'+instructions+ '\nImported graph references:\n'+json.dumps(posts)
         system += '\nRetrieved evidence:\n'+json.dumps(evidence)
         messages = [{'role': 'system', 'content': system}]
         # Keep complete recent user/assistant turns. Tool wire records are scoped to their own turns.
@@ -103,21 +111,40 @@ class Assistant:
         for message in recent:
             messages.append({'role': message['role'], 'content': message['content'][:2000]})
         messages.append({'role': 'user', 'content': text[:6000]})
+        executable, model = self.runtime.configured() if hasattr(self.runtime, 'configured') else (None, None)
+        user_data['audit'] = {
+            'system_prompt': system, 'base_system_prompt': SYSTEM,
+            'skill_instructions': instructions, 'tool_definitions': tools,
+            'enabled_skills': [{'id': s['id'], 'name': s.get('name', s['id']),
+                                'path': s.get('path')} for s in self.skills.list() if s.get('enabled')],
+            'model': 'Qwen3.5-9B', 'model_path': model, 'runtime_path': executable,
+            'selected_checkpoint': self.store.setting('checkpoint'),
+            'generation': {'temperature': .2, 'max_output_tokens': 1600, 'thinking_enabled': False,
+                           'context_tokens': self.store.setting('context', 8192)},
+            'history_message_ids': [m['id'] for m in recent],
+            'initial_evidence': list(evidence),
+            'graphs': [{'id': g['id'], 'cascade_id': g['cascade_id'], 'source': g['source'],
+                        'estimated': g.get('estimated', False), 'accepted': g.get('accepted', False),
+                        'warnings': g.get('warnings', [])} for g in attached],
+        }
+        self.store.message_data(user_message, user_data)
         if sum(len(m['content']) for m in messages) > 24000:
             raise ValueError('Input is too large for the default context; use a smaller bundle or shorter request')
         tool_results = []
         for _ in range(5):
             job.check()
-            answer = self.runtime.stream(messages, self.skills.tools(), job)
+            answer = self.runtime.stream(messages, tools, job)
             messages.append(answer)
             calls = answer.get('tool_calls', [])
             if not calls:
                 final = validate_answer(answer['content'], evidence)
-                data = {**final, 'evidence': evidence, 'tools': tool_results, 'graph_ids': graph_ids}
+                data = {**final, 'evidence': evidence, 'tools': tool_results,
+                        'graph_ids': graph_ids, 'turn_id': turn_id}
                 self.store.message(conversation, 'assistant', final['summary'], data)
                 return data
             for call in calls[:8]:
                 name = call['function']['name']
+                arguments = None
                 try:
                     arguments = json.loads(call['function']['arguments'])
                     if not isinstance(arguments, dict):
@@ -126,9 +153,10 @@ class Assistant:
                     result = self.invoke(name, arguments, allowed, evidence)
                 except Exception as exc:
                     result = {'error': str(exc)}
-                item = {'name': name, 'result': result}
+                item = {'name': name, 'arguments': arguments, 'result': result}
                 tool_results.append(item); job.emit('tool_result', **item)
-                self.store.message(conversation, 'tool', json.dumps(item), {'wire': call})
+                self.store.message(conversation, 'tool', json.dumps(item),
+                    {'wire': call, **item, 'turn_id': turn_id})
                 messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': json.dumps(result)})
             if len(calls) > 8:
                 raise ValueError('Too many tool calls in one turn')

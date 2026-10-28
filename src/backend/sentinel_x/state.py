@@ -91,8 +91,13 @@ class Store:
 
     def message(self, ident, role, content, data=None):
         with self.connection() as db:
-            db.execute('INSERT INTO messages(conversation,role,content,data) VALUES (?,?,?,?)',
-                       (ident, role, content, json.dumps(data or {})))
+            cursor = db.execute('INSERT INTO messages(conversation,role,content,data) VALUES (?,?,?,?)',
+                                (ident, role, content, json.dumps(data or {})))
+            return cursor.lastrowid
+
+    def message_data(self, ident, data):
+        with self.connection() as db:
+            db.execute('UPDATE messages SET data=? WHERE id=?', (json.dumps(data), ident))
 
     def save_graph(self, graph):
         with self.connection() as db:

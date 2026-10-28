@@ -13,6 +13,9 @@ def main():
     parser.add_argument('--data-dir', type=Path, default=data_directory())
     sub = parser.add_subparsers(dest='command')
     sub.add_parser('gui')
+    export = sub.add_parser('export')
+    export.add_argument('conversation')
+    export.add_argument('output', type=Path)
     train = sub.add_parser('train')
     train.add_argument('dataset', type=Path)
     train.add_argument('--threshold', type=int, default=100)
@@ -29,7 +32,10 @@ def main():
         from .desktop import main as desktop
         return desktop(args.data_dir)
     store = Store(args.data_dir)
-    if args.command == 'train':
+    if args.command == 'export':
+        from .exporting import export_conversation
+        print(export_conversation(store, args.conversation, args.output))
+    elif args.command == 'train':
         from .graphs import native_twitter
         from .learning import train
         folders = [args.dataset] if (args.dataset/'tree').is_dir() else [

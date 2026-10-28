@@ -138,6 +138,7 @@ class Window(QMainWindow):
         column.addWidget(self.conversation_list)
         row = QHBoxLayout(); row.addWidget(self.button('New', self.new_conversation)); row.addWidget(self.button('Rename', self.rename)); row.addWidget(self.button('Delete', self.delete))
         column.addLayout(row); splitter.addWidget(conversations)
+        column.addWidget(self.button('Export conversation (.md)', self.export_conversation))
         chat = QWidget(); column = QVBoxLayout(chat)
         self.transcript = QTextBrowser(); self.transcript.setOpenExternalLinks(False); column.addWidget(self.transcript, 1)
         self.live = QLabel(); self.live.setWordWrap(True); self.live.setMaximumHeight(70); column.addWidget(self.live)
@@ -177,6 +178,18 @@ class Window(QMainWindow):
         if not self.conversation: return
         title, ok = QInputDialog.getText(self, 'Rename conversation', 'Name:')
         if ok and title.strip(): self.service.rename(self.conversation, title); self.refresh_conversations()
+
+    def export_conversation(self):
+        if not self.conversation:
+            raise ValueError('Select a conversation to export')
+        dialog = QFileDialog(self, 'Export conversation as Markdown')
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dialog.setNameFilter('Markdown report (*.md)'); dialog.setDefaultSuffix('md')
+        dialog.selectFile(f'Sentinel-X-{self.conversation[:8]}.md')
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        path = self.service.export(self.conversation, dialog.selectedFiles()[0])
+        self.notice.setText(f'Conversation exported to {path}')
 
     def delete(self):
         if not self.conversation: return
