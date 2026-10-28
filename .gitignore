@@ -1,0 +1,16 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+out/
+build/
+*.egg-info/
+.env
+resources/*
+!resources/.gitkeep
+models/
+*.gguf
+*.pt
+*.sqlite*

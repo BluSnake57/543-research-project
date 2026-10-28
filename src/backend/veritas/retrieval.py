@@ -1,0 +1,215 @@
+"""Incremental, provenance-preserving hybrid retrieval with a disk-backed HNSW index."""
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+from pathlib import Path
+import re
+import sqlite3
+import threading
+
+EXTENSIONS = {'.txt', '.md', '.json', '.jsonl', '.csv'}
+
+
+def claim_record(value):
+    return isinstance(value, dict) and 'claim' in value and ('label' in value or 'evidence' in value)
+
+
+def documents(path):
+    suffix = path.suffix.lower()
+    if path.name.lower() == 'label.txt':
+        return
+    if suffix in ('.txt', '.md'):
+        text = path.read_text(encoding='utf-8-sig')
+        for index, start in enumerate(range(0, len(text), 1600)):
+            yield str(index), text[max(0, start-200):start+1600], {'chunk': index}
+        return
+    if suffix == '.csv':
+        with path.open(encoding='utf-8-sig', newline='') as stream:
+            for number, row in enumerate(csv.DictReader(stream), 2):
+                if not claim_record(row):
+                    yield str(number), json.dumps(row, ensure_ascii=False), {'row': number}
+        return
+    if suffix == '.jsonl':
+        def records():
+            with path.open(encoding='utf-8-sig') as stream:
+                for number, line in enumerate(stream, 1):
+                    if line.strip():
+                        yield number, json.loads(line)
+    else:
+        def records():
+            value = json.loads(path.read_text(encoding='utf-8-sig'))
+            for number, row in enumerate(value if isinstance(value, list) else [value], 1):
+                yield number, row
+    for number, row in records():
+        if claim_record(row):
+            continue
+        if isinstance(row, dict) and 'id' in row and 'lines' in row:
+            # FEVER Wikipedia JSONL: line ID<TAB>sentence<TAB>optional hyperlink columns.
+            for line in row['lines'].splitlines():
+                parts = line.split('\t')
+                if len(parts) >= 2 and parts[1].strip():
+                    yield f'{number}:{parts[0]}', parts[1], {'page': row['id'], 'sentence': parts[0]}
+        else:
+            text = row if isinstance(row, str) else json.dumps(row, ensure_ascii=False)
+            for start in range(0, len(text), 1600):
+                yield f'{number}:{start}', text[max(0, start-200):start+1600], {'record': number}
+
+
+class Retrieval:
+    def __init__(self, store):
+        self.store = store
+        self.root = store.root / 'index'
+        self.path = self.root / 'evidence.sqlite'
+        self.lock = threading.RLock()
+        self.embedder = None
+        with self.connection() as db:
+            db.executescript('''
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, hash TEXT, root TEXT);
+                CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, path TEXT, key TEXT,
+                    text TEXT, provenance TEXT, vector BLOB);
+                CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(text, content='chunks', content_rowid='id');
+                CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+                    INSERT INTO search(rowid,text) VALUES(new.id,new.text); END;
+                CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+                    INSERT INTO search(search,rowid,text) VALUES('delete',old.id,old.text); END;
+            ''')
+
+    def connection(self):
+        db = sqlite3.connect(self.path, timeout=30)
+        db.row_factory = sqlite3.Row
+        return db
+
+    def embedding(self):
+        path = self.store.root / 'models' / 'embedding'
+        if not (path / 'config.json').exists():
+            return None
+        if self.embedder is None:
+            from sentence_transformers import SentenceTransformer
+            self.embedder = SentenceTransformer(str(path), local_files_only=True, device='cpu')
+        return self.embedder
+
+    def index(self, directory: Path, job=None):
+        directory = directory.expanduser().resolve()
+        if not directory.is_dir():
+            raise ValueError('Resources directory does not exist')
+        result = {'indexed': 0, 'unchanged': 0, 'deleted': 0, 'errors': [], 'excluded': 0}
+        embedding = self.embedding()
+        seen = set()
+        with self.lock:
+            db = self.connection()
+            try:
+                for path in sorted(directory.rglob('*')):
+                    if job:
+                        job.check()
+                    if not path.is_file() or path.is_symlink():
+                        continue
+                    if path.suffix.lower() not in EXTENSIONS:
+                        result['errors'].append({'path': str(path), 'error': 'Unsupported file type'})
+                        continue
+                    name = str(path.resolve()); seen.add(name)
+                    try:
+                        digest = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
+                        previous = db.execute('SELECT hash FROM files WHERE path=?', (name,)).fetchone()
+                        missing_vectors = db.execute('SELECT 1 FROM chunks WHERE path=? AND vector IS NULL LIMIT 1', (name,)).fetchone()
+                        if previous and previous[0] == digest and not (embedding and missing_vectors):
+                            result['unchanged'] += 1
+                            continue
+                        # A savepoint keeps the old file index intact if parsing fails mid-file.
+                        db.execute('SAVEPOINT importing')
+                        db.execute('DELETE FROM chunks WHERE path=?', (name,))
+                        batch = []
+                        count = 0
+
+                        def flush():
+                            if not batch:
+                                return
+                            vectors = embedding.encode([r[1] for r in batch], normalize_embeddings=True) if embedding else [None]*len(batch)
+                            for (key, text, provenance), vector in zip(batch, vectors):
+                                db.execute('INSERT INTO chunks(path,key,text,provenance,vector) VALUES (?,?,?,?,?)',
+                                    (name, key, text, json.dumps(provenance), vector.astype('float32').tobytes() if vector is not None else None))
+                            batch.clear()
+                        for record in documents(path):
+                            if job:
+                                job.check()
+                            batch.append(record); count += 1
+                            if len(batch) >= 64:
+                                flush()
+                        flush()
+                        db.execute('INSERT OR REPLACE INTO files VALUES (?,?,?)', (name, digest, str(directory)))
+                        db.execute('RELEASE importing'); db.commit()
+                        result['indexed'] += 1
+                        if not count:
+                            result['excluded'] += 1
+                        if job:
+                            job.emit('indexing', path=name, chunks=count)
+                    except Exception as exc:
+                        from .jobs import Cancelled
+                        if isinstance(exc, Cancelled):
+                            db.rollback()
+                            raise
+                        db.rollback()
+                        result['errors'].append({'path': name, 'error': str(exc)})
+                for row in db.execute('SELECT path FROM files WHERE root=?', (str(directory),)).fetchall():
+                    if row[0] not in seen:
+                        db.execute('DELETE FROM chunks WHERE path=?', (row[0],))
+                        db.execute('DELETE FROM files WHERE path=?', (row[0],)); result['deleted'] += 1
+                db.commit()
+                self.rebuild_vectors(db, job)
+            finally:
+                db.close()
+        result['mode'] = 'hybrid' if embedding else 'keyword-only: download embeddings, then reindex'
+        return result
+
+    def rebuild_vectors(self, db, job=None):
+        count = db.execute('SELECT count(*) FROM chunks WHERE vector IS NOT NULL').fetchone()[0]
+        target = self.root / 'vectors.hnsw'
+        if not count:
+            target.unlink(missing_ok=True)
+            return
+        import hnswlib
+        import numpy as np
+        index = hnswlib.Index(space='cosine', dim=384)
+        index.init_index(max_elements=count, ef_construction=150, M=16, random_seed=42)
+        cursor = db.execute('SELECT id,vector FROM chunks WHERE vector IS NOT NULL')
+        while rows := cursor.fetchmany(2048):
+            if job:
+                job.check()
+            index.add_items(np.stack([np.frombuffer(r['vector'], dtype=np.float32) for r in rows]),
+                            [r['id'] for r in rows])
+        temporary = self.root / 'vectors.tmp'
+        index.save_index(str(temporary)); temporary.replace(target)
+
+    def search(self, query, limit=8):
+        words = re.findall(r'\w+', query, flags=re.UNICODE)[:32]
+        if not words:
+            return []
+        with self.lock:
+            db = self.connection()
+            try:
+                rows = db.execute('SELECT rowid FROM search WHERE search MATCH ? ORDER BY rank LIMIT 40',
+                                  (' OR '.join('"'+w+'"' for w in words),)).fetchall()
+                ranks = {r[0]: 1/(60+i) for i, r in enumerate(rows, 1)}
+                mode = 'keyword'
+                if (self.root / 'vectors.hnsw').exists() and self.embedding():
+                    import hnswlib
+                    index = hnswlib.Index(space='cosine', dim=384)
+                    index.load_index(str(self.root / 'vectors.hnsw')); index.set_ef(80)
+                    count = index.get_current_count()
+                    if count:
+                        labels, _ = index.knn_query(self.embedding().encode([query], normalize_embeddings=True), k=min(40, count))
+                        for i, ident in enumerate(labels[0], 1):
+                            ranks[int(ident)] = ranks.get(int(ident), 0) + 1/(60+i)
+                        mode = 'hybrid'
+                result = []
+                for ident in sorted(ranks, key=ranks.get, reverse=True)[:limit]:
+                    row = db.execute('SELECT * FROM chunks WHERE id=?', (ident,)).fetchone()
+                    if row:
+                        provenance = json.loads(row['provenance'])
+                        result.append({'citation': f'E{ident}', 'text': row['text'],
+                                       'path': row['path'], 'provenance': provenance, 'retrieval': mode})
+                return result
+            finally:
+                db.close()
