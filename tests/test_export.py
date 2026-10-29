@@ -79,3 +79,15 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(target.read_text(), 'existing')
         with self.assertRaises(ValueError): export_conversation(self.store, 'missing', self.root/'missing.md')
         self.assertFalse((self.root/'missing.md').exists())
+
+    def test_failed_tool_raw_arguments_and_later_legacy_summary_are_preserved(self):
+        self.store.message(self.conversation, 'user', 'First request')
+        self.store.message(self.conversation, 'tool', '', {'name': 'graphsage_predict',
+            'arguments': None, 'result': {'error': 'Invalid arguments'},
+            'wire': {'function': {'arguments': '{broken request'}}})
+        self.store.message(self.conversation, 'user', 'Second request')
+        self.store.message(self.conversation, 'assistant', 'Later response', {'tools': [
+            {'name': 'graphsage_predict', 'result': {'error': 'Later summary result'}}]})
+        report = render_conversation(self.store, self.conversation)
+        self.assertIn('{broken request', report)
+        self.assertIn('Later summary result', report)

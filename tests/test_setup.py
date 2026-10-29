@@ -52,3 +52,17 @@ class SetupTests(unittest.TestCase):
         self.service.store.configure('fever_ready', True)
         self.assertFalse(needs_prompt(self.service))
         with self.assertRaises(ValueError): self.service.download('runtime')
+
+    def test_opening_main_window_prompts_without_starting_downloads(self):
+        from sentinel_x.desktop import Window
+        self.service.store.configure('setup_started', True)
+        window = Window(self.service)
+        try:
+            window.show(); self.app.processEvents()
+            self.assertTrue(window.setup_guide.isVisible())
+            self.assertEqual(self.service.jobs.list(), [])
+            window.setup_guide.skip.click(); self.app.processEvents()
+            self.assertFalse(window.setup_guide.isVisible())
+            self.assertTrue(needs_prompt(self.service))
+        finally:
+            window.close(); self.app.processEvents()

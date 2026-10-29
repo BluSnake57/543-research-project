@@ -75,7 +75,13 @@ def evidence_section(records):
 def tool_record(message):
     data = message.get('data', {})
     if data.get('name'):
-        return data
+        value = dict(data)
+        if value.get('arguments') is None:
+            raw = data.get('wire', {}).get('function', {}).get('arguments')
+            if raw is not None:
+                try: value['arguments'] = json.loads(raw)
+                except ValueError: value['arguments'] = raw
+        return value
     try:
         content = json.loads(message['content'])
         if not isinstance(content, dict): return {'name': 'Unknown tool', 'result': message['content']}
@@ -112,6 +118,7 @@ def render_conversation(store, ident):
              '## Messages and execution record', '']
     if not messages:
         lines += ['This conversation has no saved messages.', '']
+    current_turn_tools = []
     for index, message in enumerate(messages, 1):
         data = message['data']; role = message['role']
         label = {'user': 'User', 'assistant': 'Sentinel-X', 'tool': 'Skill / tool execution'}.get(role, role.title())
@@ -121,6 +128,7 @@ def render_conversation(store, ident):
         lines += ['']
         if role == 'tool':
             tool = tool_record(message)
+            current_turn_tools.append(tool)
             name = tool.get('name', 'Unknown tool')
             skill = 'GraphSAGE virality skill' if name == 'graphsage_predict' else 'Core RAG evidence search' if name == 'evidence_search' else 'Tool'
             lines += [f'**Capability used:** {skill}', '', f'**Function:** {code(name)}', '',
@@ -130,6 +138,7 @@ def render_conversation(store, ident):
             continue
         lines += [quote(message['content']), '']
         if role == 'user':
+            current_turn_tools = []
             if data.get('graph_ids'):
                 lines += ['#### Attached graph IDs', '']+readable(data['graph_ids'])+['']
             audit = data.get('audit')
@@ -159,9 +168,7 @@ def render_conversation(store, ident):
                           '**Citations:** '+', '.join(code(c) for c in claim.get('citations', [])), '']
             lines += ['#### RAG references for this answer', '']+evidence_section(data.get('evidence', []))+['']
             # Older records can have summary tool results without a standalone tool message.
-            previous_tools = {t.get('name') for m in messages[:index-1] if m['role'] == 'tool'
-                              for t in [tool_record(m)] if m.get('data', {}).get('turn_id') == data.get('turn_id')}
-            missing = [t for t in data.get('tools', []) if t.get('name') not in previous_tools]
+            missing = data.get('tools', [])[len(current_turn_tools):]
             if missing:
                 lines += ['#### Recorded skill usage', '']+readable(missing)+['']
     return '\n'.join(lines).rstrip()+'\n'

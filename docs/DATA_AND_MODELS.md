@@ -53,3 +53,11 @@ Use a machine with enough RAM for the roughly multi-gigabyte quantized weights, 
 Model release manifests pin source revisions and artifact hashes. Local development catalogs resolve/persist embedding revisions on first setup. Models download from Hugging Face; FEVER downloads from its official site. No inference request or imported post data is sent to these services. There is no telemetry or live Twitter/X integration.
 
 The desktop uses Qt Widgets directly from Python, without an application HTTP server or JavaScript runtime. Precompiled llama.cpp artifacts are selected from official release metadata, verified using the published SHA-256 digest, and pinned locally before use. Optional custom source builds retain the source commit in the bundled manifest.
+
+## Application boundaries and audit exports
+
+GraphSAGE training is provided by Sentinel-X Trainer, a separate process/application. The assistant retains inference and checkpoint selection. Both share checkpoint storage but use independent persisted job tables. The trainer does not start a language model or require llama.cpp.
+
+Sentinel-X includes its precompiled llama.cpp runtime in the release bundle. Runtime fetching is a developer/build operation; startup prompts only offer weights and optional FEVER evidence. Skipping starts no download and missing items are offered at later launches.
+
+Each new chat turn stores the assembled application system message, skill instructions/function definitions, generation settings, initial RAG evidence, graph provenance, and history message IDs. Tool requests/results remain chronological records. Markdown export includes these snapshots and explicit answer reasoning summaries; older missing context is labeled unavailable rather than reconstructed. Thinking mode remains disabled by default.

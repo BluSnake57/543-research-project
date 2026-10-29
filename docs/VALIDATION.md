@@ -2,9 +2,9 @@
 
 ## Verified after the native Python conversion
 
-All 36 Python tests pass with Python 3.14 and installed dependencies; none are skipped.
+All 49 Python tests pass with Python 3.14 and installed dependencies; none are skipped.
 
-- Native PySide6/Qt Widgets window creation, all six navigation pages, conversations, and graph attachments using the offscreen platform plugin.
+- Native PySide6/Qt Widgets window creation, the assistant’s five navigation pages and the separate trainer, conversations, and graph attachments using the offscreen platform plugin.
 - Pure-Python wheel build with bundled assets, followed by native-window startup from an isolated extraction of that wheel.
 - Visual inspection of a native-window screenshot.
 - Real PyTorch GraphSAGE training on synthetic cascades, checkpoint save/load, batch inference, and invocation through the skill handler.
@@ -16,14 +16,22 @@ All 36 Python tests pass with Python 3.14 and installed dependencies; none are s
 
 Synthetic training verifies mechanics rather than Twitter15/16 prediction quality. The test embedder validates the semantic-index pipeline rather than BGE model quality. Offscreen Qt tests do not establish every desktop interaction or display-server configuration.
 
+Additional verified behavior:
+
+- Markdown exports include exact recorded application prompts, messages, explanation summaries, tool arguments/results/errors, and RAG filenames/excerpts. Legacy records show missing history explicitly.
+- Startup downloads require an explicit button press; skipping starts no download and leaves future prompts enabled. Only weights/evidence are offered, never llama.cpp.
+- A separate trainer window completes real training and publishes its checkpoint to the assistant. Independent job namespaces prevent trainer startup/closure from interrupting assistant work.
+- A cached official Linux llama.cpp binary was staged under `build/llama/bin` and its real `--version` output verified: build 11960, pinned commit `8642541b2`.
+- Packaging orchestration was tested using a mocked freezer and fixture binaries: the release includes both apps and requires runtime libraries/licenses in the assistant. This is not a claim that actual frozen executables were built.
+
 ## Not yet verified
 
-- Live official runtime/model downloads, actual Qwen generation/function parsing, and full FEVER download/indexing.
+- Live build-time runtime/model downloads, actual Qwen generation/function parsing, and full FEVER download/indexing.
 - BGE weight loading and retrieval quality on real evidence.
 - Standalone packaging, signing/notarization, and application execution on Windows/macOS. Native Linux UI creation is verified, but no standalone executable has been built here.
 - Real GPU acceleration and held-out performance on the full Twitter15/16 datasets.
 
-Standalone packaging uses PyInstaller on each target OS and prebuilt Python dependencies. No npm or native compilation step is part of normal setup. If a dependency wheel is unavailable for the user's Python/platform combination, pip fails rather than compiling it.
+Standalone packaging uses PyInstaller on each target OS and prebuilt Python dependencies; llama.cpp is mandatory in assistant release bundles. No npm or native compilation step is part of normal setup. If a dependency wheel is unavailable for the user's Python/platform combination, pip fails rather than compiling it.
 
 ## Git history
 
