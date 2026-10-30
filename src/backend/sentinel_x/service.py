@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import platform
 import shutil
 
 from .assistant import Assistant
@@ -13,6 +14,7 @@ from .graphs import (estimate_graph, native_twitter, normalize_posts, read_posts
 from .jobs import Jobs
 from .retrieval import Retrieval
 from .runtime import Llama
+from .runtime_packages import LABELS, runtime_choices, probe_runtime
 from .skills import Skills
 from .state import Store, data_directory
 
@@ -32,15 +34,15 @@ class Service:
     def close(self):
         for job in self.jobs.live.values():
             job.cancelled.set()
-        self.runtime.stop()
-        self.jobs.pool.shutdown(wait=False, cancel_futures=True)
+        self.runtime.stop(wait=False)
+        self.jobs.shutdown(wait=False, cancel_futures=True)
 
     def cancel(self, ident):
         data = self.jobs.get(ident)
         self.jobs.cancel(ident)
         if data['status'] == 'running' and (data['kind'].startswith('chat:') or
-                data['kind'] in ('map-posts', 'estimate-graph', 'qwen-smoke')):
-            self.runtime.stop()
+                data['kind'] in ('map-posts', 'estimate-graph', 'qwen-smoke', 'thinking-check')):
+            self.runtime.stop(wait=False)
 
     def status(self):
         executable, model = self.runtime.configured()
@@ -50,12 +52,18 @@ class Service:
                 'checkpoint': self.store.setting('checkpoint'),
                 'context': self.store.setting('context', 8192),
                 'gpu_layers': str(self.store.setting('gpu_layers', 'auto')),
+                'thinking_budget': self.store.setting('thinking_budget', 256),
+                'installed_runtimes': self.store.setting('installed_runtimes', {}),
+                'fever': self.models.fever_status(),
+                'running_runtime': self.runtime.active,
                 'first_run': not self.store.setting('setup_started', False)}
 
     def configure(self, **values):
-        if set(values) - {'resources', 'context', 'gpu_layers', 'llama_path', 'checkpoint'}:
+        if set(values) - {'resources', 'context', 'gpu_layers', 'llama_path', 'checkpoint', 'thinking_budget'}:
             raise ValueError('Unknown setting')
         for key, value in values.items():
+            if key == 'thinking_budget' and (not isinstance(value, int) or not 64 <= value <= 2048):
+                raise ValueError('Thinking budget must be between 64 and 2048 tokens')
             if key == 'context' and (not isinstance(value, int) or not 2048 <= value <= 32768):
                 raise ValueError('Context must be between 2048 and 32768')
             if key == 'gpu_layers' and str(value) != 'auto' and (not str(value).isdigit() or int(value) > 999):
@@ -67,10 +75,10 @@ class Service:
                 raise ValueError('Path must be a string')
         for key, value in values.items():
             self.store.configure(key, value)
-        if set(values) & {'context', 'gpu_layers', 'llama_path'}:
+        if set(values) & {'context', 'gpu_layers', 'llama_path', 'thinking_budget'}:
             self.runtime.stop()
 
-    def setup(self, keys=('qwen', 'embedding'), fever=False):
+    def setup(self, keys=('qwen', 'embedding'), fever=False, index_fever=False):
         keys = tuple(keys)
         if set(keys) - {'qwen', 'embedding'}:
             raise ValueError('Only model weights are downloaded during setup')
@@ -78,17 +86,73 @@ class Service:
         def work(job):
             result = {'models': [self.models.install(key, job) for key in keys]}
             if fever:
-                result['fever'] = self.models.fever(job)
-                result['fever']['index'] = self.retrieval.index(
-                    Path(result['fever']['evidence_directory']), job)
-                self.store.configure('fever_ready', not result['fever']['index']['errors'])
+                result['fever'] = self.models.fever(job, extract=index_fever)
+                if index_fever:
+                    result['fever']['index'] = self.index_fever(result['fever']['evidence_directory'], job)
             return result
-        return self.jobs.submit('setup', work)
+        return self.jobs.submit('setup', work,
+            request={'keys': list(keys), 'fever': fever, 'index_fever': index_fever})
 
     def download(self, key):
         if key not in ('qwen', 'embedding'):
             raise ValueError('Unknown download')
         return self.jobs.submit('download:'+key, lambda job: self.models.install(key, job))
+
+    def download_runtime(self, backend, use_after_download=True):
+        if backend not in runtime_choices():
+            raise ValueError('This runtime is not supported on the current platform')
+        def work(job):
+            result = self.models.install_runtime(job, backend=backend, activate=False)
+            job.check()
+            if use_after_download:
+                result = {**result, 'activation_job': self.activate_runtime(backend)}
+            return result
+        return self.jobs.submit('runtime-download:'+backend, work,
+            request={'backend': backend, 'use_after_download': use_after_download})
+
+    def activate_runtime(self, backend):
+        if backend != 'bundled' and backend not in LABELS:
+            raise ValueError('Unknown runtime')
+        def work(job):
+            job.emit('stage', stage='Checking runtime before switching engines')
+            if backend == 'bundled':
+                folder = self.runtime.bundled
+                candidates = list(folder.rglob('llama-server'))+list(folder.rglob('llama-server.exe')) if folder else []
+                if not candidates:
+                    raise ValueError('Bundled runtime is missing')
+                path = str(candidates[0]); directories = [str(candidates[0].parent)]
+            else:
+                entry = self.store.setting('installed_runtimes', {}).get(backend)
+                if not entry or not Path(entry['executable']).is_file():
+                    raise ValueError('Download this runtime first')
+                path = entry['executable']; directories = entry['library_dirs']
+            checked = probe_runtime(path, manifest()['llama_cpp']['commit'], directories,
+                                    'cpu' if backend == 'bundled' else backend)
+            if backend not in ('cpu', 'bundled') and not checked['devices']:
+                raise ValueError('Runtime installed, but no compatible GPU was detected. '
+                                 'Check graphics drivers or use the bundled CPU runtime.')
+            job.check()
+            self.runtime.stop()
+            self.store.configure('llama_path', path)
+            self.store.configure('gpu_layers', 'auto' if backend != 'cpu' or platform.system() == 'Darwin' else '0')
+            return {'backend': backend, 'executable': path, 'devices': checked['devices'], 'activated': True}
+        return self.jobs.submit('runtime-activate:'+backend, work)
+
+    def retry_download(self, ident):
+        job = self.jobs.get(ident)
+        if job['status'] not in ('failed', 'cancelled', 'interrupted'):
+            raise ValueError('Only stopped or failed downloads can be retried.')
+        if job['kind'] in ('download:qwen', 'download:embedding'):
+            return self.download(job['kind'].split(':', 1)[1])
+        if job['kind'].startswith('runtime-download:'):
+            return self.download_runtime(job['request']['backend'], job['request']['use_after_download'])
+        if job['kind'] == 'fever':
+            return self.fever(job.get('request', {}).get('index', False))
+        if job['kind'] == 'fever-index':
+            return self.build_fever_index()
+        if job['kind'] == 'setup' and job.get('request'):
+            return self.setup(job['request']['keys'], job['request']['fever'], job['request'].get('index_fever', False))
+        raise ValueError('Reopen the original action to retry this task.')
 
     def import_model(self, path):
         self.runtime.stop()
@@ -111,7 +175,9 @@ class Service:
             return {'generation': True, 'function_calling': True}
         return self.jobs.submit('qwen-smoke', work)
 
-    def chat(self, conversation, text, graph_ids):
+    def chat(self, conversation, text, graph_ids, thinking=False):
+        if not isinstance(thinking, bool):
+            raise ValueError('Thinking must be On or Off')
         if not text.strip() or len(text) > 6000:
             raise ValueError('Enter a message of 1–6000 characters')
         if len(graph_ids) > 100:
@@ -122,7 +188,34 @@ class Service:
                for j in self.jobs.live.values()):
             raise ValueError('Wait for the current response or cancel it first')
         return self.jobs.submit(f'chat:{conversation}', lambda job:
-            self.assistant.chat(conversation, text, graph_ids, job))
+            self.assistant.chat(conversation, text, graph_ids, job, thinking),
+            request={'conversation': conversation, 'text': text,
+                     'graph_ids': list(graph_ids), 'thinking_enabled': thinking})
+
+    def ensure_idle(self, conversation):
+        if any(j.data['kind'] == f'chat:{conversation}' and
+               j.data['status'] in ('queued', 'running') for j in self.jobs.live.values()):
+            raise ValueError('Stop the active response or wait for it to finish before editing.')
+
+    def edit_message(self, conversation, ident, text, revision=0):
+        self.ensure_idle(conversation)
+        if any(m['id'] == ident and m['role'] == 'user' for m in self.store.messages(conversation)):
+            if len(text) > 6000:
+                raise ValueError('User messages support at most 6000 characters.')
+        self.store.edit_message(conversation, ident, text, revision)
+
+    def regenerate(self, conversation, ident):
+        self.ensure_idle(conversation)
+        message = next((m for m in self.store.messages(conversation) if m['id'] == ident), None)
+        if not message or message['role'] != 'user':
+            raise ValueError('User message not found')
+        text = message['content']
+        if not 1 <= len(text.strip()) <= 6000:
+            raise ValueError('Regeneration requires a request of 1–6000 characters')
+        branch = self.store.branch_at(conversation, ident)
+        job = self.chat(branch, text, message['data'].get('graph_ids', []),
+                        message['data'].get('thinking_enabled', False))
+        return branch, job
 
     def rename(self, ident, title):
         with self.store.connection() as db:
@@ -146,13 +239,34 @@ class Service:
     def search(self, query):
         return self.jobs.submit('search', lambda job: self.retrieval.search(query[:2000]))
 
-    def fever(self):
+    def fever(self, index=False):
         def work(job):
-            result = self.models.fever(job)
-            result['index'] = self.retrieval.index(Path(result['evidence_directory']), job)
-            self.store.configure('fever_ready', not result['index']['errors'])
+            result = self.models.fever(job, extract=index)
+            if index:
+                result['index'] = self.index_fever(result['evidence_directory'], job)
             return result
-        return self.jobs.submit('fever', work)
+        return self.jobs.submit('fever', work, request={'index': index})
+
+    def build_fever_index(self):
+        existing = next((j for j in list(self.jobs.live.values()) if j.data['kind'] == 'fever-index' and
+                         j.data['status'] in ('queued', 'running')), None)
+        if existing:
+            return existing.data['id']
+        def work(job):
+            self.store.configure('fever_ready', False)
+            result = self.models.fever(job, extract=True, download_missing=False)
+            result['index'] = self.index_fever(result['evidence_directory'], job)
+            return result
+        return self.jobs.submit('fever-index', work)
+
+    def index_fever(self, directory, job):
+        job.emit('stage', stage='Building resumable Wikipedia keyword index · chat remains available')
+        result = self.retrieval.index(Path(directory), job, semantic=False, resumable=True)
+        self.store.configure('fever_ready', not result['errors'])
+        if result['errors']:
+            raise ValueError(f'Evidence downloaded, but {len(result["errors"])} files could not be indexed. '
+                             'Retry the task. First error: '+result['errors'][0]['error'])
+        return result
 
     def import_posts(self, path, mapping=None, combine=False):
         rows = read_posts(Path(path)); mapping = mapping or suggest_mapping(rows)
@@ -165,9 +279,44 @@ class Service:
             self.store.save_graph(graph)
         return [g['id'] for g in graphs]
 
-    def map_posts(self, path):
-        rows = read_posts(Path(path))
+    def preview_posts(self, path):
         def work(job):
+            job.emit('stage', stage='Reading dataset')
+            rows = read_posts(Path(path))
+            job.check()
+            return {'count': len(rows), 'mapping': suggest_mapping(rows),
+                    'keys': sorted(set().union(*(r.keys() for r in rows[:100]))),
+                    'samples': rows[:3]}
+        return self.jobs.submit('posts-preview', work)
+
+    def import_posts_background(self, path, mapping, combine=False):
+        if not mapping.get('id') or not mapping.get('text'):
+            raise ValueError('Choose fields for Post ID and Text before importing.')
+        def work(job):
+            job.emit('stage', stage='Validating and importing posts')
+            rows = read_posts(Path(path))
+            selected = dict(mapping)
+            for number, row in enumerate(rows, 1):
+                if any(row.get(selected[field]) is None or not str(row[selected[field]]).strip()
+                       for field in ('id', 'text')):
+                    raise ValueError(f'Post {number} needs a nonempty Post ID and Text.')
+            if combine:
+                for row in rows:
+                    row['__sentinel_x_cascade'] = 'bundle'
+                selected['cascade_id'] = '__sentinel_x_cascade'
+            graphs = normalize_posts(rows, selected, str(path))
+            job.check()
+            with self.store.connection() as db:
+                for graph in graphs:
+                    job.check()
+                    db.execute('INSERT OR REPLACE INTO graphs VALUES (?,?)',
+                               (graph['id'], json.dumps(graph)))
+            return [g['id'] for g in graphs]
+        return self.jobs.submit('posts-import', work)
+
+    def map_posts(self, path):
+        def work(job):
+            rows = read_posts(Path(path))
             result = self.runtime.structured('Map these fields to id,text,author_id,timestamp,parent_id,cascade_id. '
                 'Return {"mapping":{"id":"actual_field",...}}, null for missing fields. '
                 'Do not invent values. Samples:\n'+json.dumps(rows[:3])[:10000], job)

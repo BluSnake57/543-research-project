@@ -114,7 +114,8 @@ def render_conversation(store, ident):
              f'- **Saved message records:** {len(messages)}', '',
              'This report contains saved messages and recorded application context. '
              'Reasoning sections contain explicit answer explanations or a model-provided reasoning summary; '
-             'they are not a reconstructed internal reasoning trace. Historical context that was not logged is marked as unavailable.', '',
+             'saved local-model thinking traces are labeled separately and contain only what the runtime emitted. '
+             'Historical context that was not logged is marked as unavailable.', '',
              '## Messages and execution record', '']
     if not messages:
         lines += ['This conversation has no saved messages.', '']
@@ -125,6 +126,22 @@ def render_conversation(store, ident):
         lines += [f'### {index}. {label}', '', f'- **Recorded (UTC):** {message["created"]}',
                   f'- **Message ID:** {message["id"]}']
         if data.get('turn_id'): lines += [f'- **Turn ID:** {code(data["turn_id"])}']
+        if 'thinking_enabled' in data:
+            lines += [f'- **Thinking:** {"On" if data["thinking_enabled"] else "Off"}']
+        if data.get('thinking_seconds', 0) > 0:
+            lines += [f'- **Thinking time:** {data["thinking_seconds"]:.1f} seconds']
+        if data.get('revision'):
+            lines += [f'- **Edited:** {data["edited_at"]} (revision {data["revision"]})', '',
+                      '#### Revision history', ''] + readable(data['revisions'])
+            if role == 'assistant':
+                lines += ['', 'Edited answer text; assessments and execution records below '
+                          'belong to the original generated answer.']
+        if data.get('outdated_by'):
+            lines += ['- **Based on an earlier message version:** '+
+                      ', '.join(str(x) for x in data['outdated_by'])]
+        if data.get('copied_from'):
+            lines += ['- **Copied history:** Original execution snapshots refer to the source conversation.']
+            lines += readable(data['copied_from'])
         lines += ['']
         if role == 'tool':
             tool = tool_record(message)
@@ -148,6 +165,8 @@ def render_conversation(store, ident):
                           '#### Model and generation settings', '']
                 lines += readable({k: audit.get(k) for k in ('model', 'model_path', 'runtime_path', 'selected_checkpoint')})
                 lines += readable(audit.get('generation', {}))+['', '#### Enabled skills (available, not necessarily invoked)', '']
+                if audit.get('format_retry'):
+                    lines += ['**Response formatting retry:**', '']+readable(audit['format_retry'])+['']
                 lines += readable(audit.get('enabled_skills', []))+['']
                 if audit.get('skill_instructions'):
                     lines += ['**Skill instructions included in the system prompt:**', '', block(audit['skill_instructions']), '']
@@ -158,6 +177,10 @@ def render_conversation(store, ident):
             else:
                 lines += ['Not recorded for this historical turn. The current prompt is not substituted for an unknown historical prompt.', '']
         elif role == 'assistant':
+            if data.get('thinking_trace'):
+                lines += ['#### Local model thinking trace', '', quote(data['thinking_trace']), '']
+                if data.get('thinking_trace_truncated'):
+                    lines += ['Only the most recent 64,000 characters were retained.', '']
             lines += ['#### Reasoning summary and explanations', '']
             summary = data.get('reasoning_summary')
             lines += [quote(summary) if summary else 'No separate model-provided reasoning summary was recorded.', '']

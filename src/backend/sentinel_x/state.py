@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sqlite3
@@ -98,6 +99,61 @@ class Store:
     def message_data(self, ident, data):
         with self.connection() as db:
             db.execute('UPDATE messages SET data=? WHERE id=?', (json.dumps(data), ident))
+
+    def edit_message(self, conversation, ident, content, revision):
+        """Change visible text atomically, retaining original execution provenance."""
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError('Message cannot be empty')
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT * FROM messages WHERE id=? AND conversation=?',
+                             (ident, conversation)).fetchone()
+            if not row or row['role'] not in ('user', 'assistant'):
+                raise ValueError('Editable message not found in this conversation')
+            data = json.loads(row['data'] or '{}')
+            if data.get('revision', 0) != revision:
+                raise ValueError('This message changed. Reopen the editor to use its latest version.')
+            if content == row['content']:
+                return
+            now = datetime.now(timezone.utc).isoformat()
+            data.setdefault('revisions', []).append({'content': row['content'],
+                'revision': revision, 'replaced_at': now})
+            data.update(revision=revision+1, edited_at=now)
+            db.execute('UPDATE messages SET content=?, data=? WHERE id=?',
+                       (content, json.dumps(data), ident))
+            for later in db.execute('SELECT id,data FROM messages WHERE conversation=? AND id>?',
+                                    (conversation, ident)).fetchall():
+                metadata = json.loads(later['data'] or '{}')
+                causes = metadata.setdefault('outdated_by', [])
+                if ident not in causes:
+                    causes.append(ident)
+                db.execute('UPDATE messages SET data=? WHERE id=?',
+                           (json.dumps(metadata), later['id']))
+
+    def branch_at(self, conversation, ident):
+        """Copy history before a user request; caller resubmits the revised request."""
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            original = db.execute('SELECT title FROM conversations WHERE id=?',
+                                  (conversation,)).fetchone()
+            target = db.execute('SELECT * FROM messages WHERE conversation=? AND id=?',
+                                (conversation, ident)).fetchone()
+            if not original or not target or target['role'] != 'user':
+                raise ValueError('User message not found')
+            branch = uuid.uuid4().hex
+            db.execute('INSERT INTO conversations(id,title) VALUES (?,?)',
+                       (branch, original['title']+' (regenerated)'))
+            mapping = {}
+            for row in db.execute('SELECT * FROM messages WHERE conversation=? AND id<? ORDER BY id',
+                                  (conversation, ident)).fetchall():
+                data = json.loads(row['data'] or '{}')
+                data['copied_from'] = {'conversation': conversation, 'message': row['id']}
+                data['outdated_by'] = [mapping[x] for x in data.get('outdated_by', []) if x in mapping]
+                # Audit snapshots describe the original execution and remain immutable.
+                cursor = db.execute('INSERT INTO messages(conversation,role,content,data,created) '
+                    'VALUES (?,?,?,?,?)', (branch, row['role'], row['content'], json.dumps(data), row['created']))
+                mapping[row['id']] = cursor.lastrowid
+        return branch
 
     def save_graph(self, graph):
         with self.connection() as db:

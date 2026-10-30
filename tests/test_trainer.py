@@ -31,8 +31,8 @@ class TrainerTests(unittest.TestCase):
                 trainer.close()
                 self.assertFalse(main.jobs.live[job].cancelled.is_set())
             finally:
-                release.set(); main.close(); main.jobs.pool.shutdown(wait=True)
-                if trainer: trainer.jobs.pool.shutdown(wait=True)
+                release.set(); main.close(); main.jobs.shutdown(wait=True)
+                if trainer: trainer.jobs.shutdown(wait=True)
 
     def test_separate_trainer_window_trains_and_main_app_sees_checkpoint(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -61,5 +61,5 @@ class TrainerTests(unittest.TestCase):
                 self.assertEqual(window.service.store.setting('checkpoint'), jobs[0]['result']['id'])
             finally:
                 trainer.close(); window.close()
-                training.jobs.pool.shutdown(wait=True); main.jobs.pool.shutdown(wait=True)
+                training.jobs.shutdown(wait=True); main.jobs.shutdown(wait=True)
                 self.app.processEvents()

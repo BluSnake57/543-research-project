@@ -1,4 +1,4 @@
-"""Build-time runtime preparation. End-user setup never downloads llama.cpp."""
+"""Prepare the included runtime; the app can additionally download optional GPU engines."""
 from __future__ import annotations
 
 import json

@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from subprocess import CompletedProcess
 import zipfile
 
 import numpy as np
@@ -37,7 +38,7 @@ class NativeServices(unittest.TestCase):
         self.service = Service(self.root)
 
     def tearDown(self):
-        self.service.close(); self.service.jobs.pool.shutdown(wait=True)
+        self.service.close(); self.service.jobs.shutdown(wait=True)
         self.temp.cleanup()
 
     def test_packaged_assets_and_no_javascript_stack(self):
@@ -120,6 +121,9 @@ class NativeServices(unittest.TestCase):
             headers = {'Content-Length': str(len(payload))}
         with patch('sentinel_x.downloads.get_json', return_value={'assets': [asset]}), \
              patch('sentinel_x.downloads.request', return_value=Response(payload)), \
+             patch('sentinel_x.runtime_packages.subprocess.run', side_effect=[
+                 CompletedProcess([], 0, 'version: 11960 (8642541b2)', ''),
+                 CompletedProcess([], 0, 'Available devices:\n', '')]), \
              patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='x86_64'):
             result = self.service.models.install_runtime()
         self.assertTrue(result['precompiled'])
@@ -158,7 +162,7 @@ class DesktopSmoke(unittest.TestCase):
             service = Service(Path(temporary)); window = Window(service, auto_setup=False)
             try:
                 window.show(); self.app.processEvents()
-                self.assertEqual(window.pages.count(), 5)
+                self.assertEqual(window.pages.count(), 3)
                 window.new_conversation()
                 self.assertEqual(window.conversation_list.count(), 1)
                 self.assertIsNotNone(window.conversation)
@@ -168,9 +172,9 @@ class DesktopSmoke(unittest.TestCase):
                 window.attached.add(ident); window.refresh_graphs()
                 self.assertEqual(window.graph_list.topLevelItemCount(), 1)
                 self.assertIn(ident, window.attached)
-                for i in range(5):
+                for i in range(3):
                     window.navigation.setCurrentRow(i); self.app.processEvents()
                     self.assertEqual(window.pages.currentIndex(), i)
                 window._poll()
             finally:
-                window.close(); service.jobs.pool.shutdown(wait=True); self.app.processEvents()
+                window.close(); service.jobs.shutdown(wait=True); self.app.processEvents()

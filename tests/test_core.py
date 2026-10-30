@@ -203,16 +203,17 @@ class DownloadTests(TemporaryTest):
         path = self.root/'file'; path.write_bytes(b'hello')
         self.assertEqual(digest_file(path, 'git-sha1'), hashlib.sha1(b'blob 5\0hello').hexdigest())
 
-    def test_cancel_retains_partial_and_prevents_ready(self):
+    def test_already_cancelled_download_does_not_start_network(self):
         class Cancel:
             def check(self):
                 raise ValueError('cancelled')
         target = self.root/'models/example'
-        with patch('sentinel_x.downloads.request', return_value=Response(b'abcdef')):
+        with patch('sentinel_x.downloads.request', return_value=Response(b'abcdef')) as fetch:
             with self.assertRaisesRegex(ValueError, 'cancelled'):
                 download('https://example.com/model', target, job=Cancel())
         self.assertFalse(target.exists())
-        self.assertTrue(target.with_name('example.part').exists())
+        self.assertFalse(target.with_name('example.part').exists())
+        fetch.assert_not_called()
 
     def test_pinned_release_catalog_needs_no_metadata_network(self):
         config = {'qwen': {'repo': 'example/repo', 'revision': 'a'*40,
@@ -281,7 +282,7 @@ class JobTests(TemporaryTest):
             job.cancelled.set()
             raise OSError('Transport closed by cancellation')
         ident = jobs.submit('chat:test', interrupted)
-        jobs.pool.shutdown()
+        jobs.shutdown()
         self.assertEqual(jobs.get(ident)['status'], 'cancelled')
 
     def test_failed_task_persists_error(self):
@@ -289,7 +290,7 @@ class JobTests(TemporaryTest):
         def failed(job):
             raise ValueError('Invalid graph')
         ident = jobs.submit('predict', failed)
-        jobs.pool.shutdown()
+        jobs.shutdown()
         self.assertEqual(jobs.get(ident)['status'], 'failed')
         self.assertEqual(jobs.get(ident)['error'], 'Invalid graph')
 
@@ -302,7 +303,7 @@ class JobTests(TemporaryTest):
             time.sleep(.01)
         self.assertEqual(data['result'], {'ok': True})
         self.assertEqual([e['seq'] for e in data['events']], list(range(len(data['events']))))
-        jobs.pool.shutdown()
+        jobs.shutdown()
         self.assertEqual(Jobs(self.store).get(ident)['status'], 'completed')
 
 

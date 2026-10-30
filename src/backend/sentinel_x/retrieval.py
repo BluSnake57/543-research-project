@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sqlite3
 import threading
+import time
 
 EXTENSIONS = {'.txt', '.md', '.json', '.jsonl', '.csv'}
 
@@ -64,11 +65,15 @@ class Retrieval:
         self.root = store.root / 'index'
         self.path = self.root / 'evidence.sqlite'
         self.lock = threading.RLock()
+        self.vector_lock = threading.RLock()
+        self.indexing = threading.Event()
         self.embedder = None
         with closing(self.connection()) as db, db:
             db.executescript('''
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, hash TEXT, root TEXT);
+                CREATE TABLE IF NOT EXISTS index_progress(path TEXT PRIMARY KEY, hash TEXT,
+                    root TEXT, chunks INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, path TEXT, key TEXT,
                     text TEXT, provenance TEXT, vector BLOB);
                 CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(text, content='chunks', content_rowid='id');
@@ -92,22 +97,47 @@ class Retrieval:
             self.embedder = SentenceTransformer(str(path), local_files_only=True, device='cpu')
         return self.embedder
 
-    def index(self, directory: Path, job=None):
+    def index(self, directory: Path, job=None, semantic=True, resumable=False, batch_size=None):
+        batch_size = (64 if semantic else 2048) if batch_size is None else batch_size
+        if not isinstance(batch_size, int) or not 1 <= batch_size <= 8192:
+            raise ValueError('Index batch size must be between 1 and 8192 passages')
+        self.indexing.set()
+        try:
+            return self._index(directory, job, semantic, resumable, batch_size)
+        finally:
+            self.indexing.clear()
+
+    def _index(self, directory, job, semantic, resumable, batch_size):
         directory = directory.expanduser().resolve()
         if not directory.is_dir():
             raise ValueError('Resources directory does not exist')
+        managed_fever = (self.store.root/'resources'/'fever').resolve()
+        def deferred_fever(path):
+            return not directory.is_relative_to(managed_fever) and path.resolve().is_relative_to(managed_fever)
         result = {'indexed': 0, 'unchanged': 0, 'deleted': 0, 'errors': [], 'excluded': 0}
-        embedding = self.embedding()
+        if job:
+            job.emit('stage', stage='Preparing evidence search model' if semantic else
+                     'Indexing Wikipedia text · available passages can already be searched')
+        embedding = self.embedding() if semantic else None
         seen = set()
         with self.lock:
             db = self.connection()
             try:
-                for path in sorted(directory.rglob('*')):
+                paths = sorted(directory.rglob('*'))
+                total_files = sum(p.is_file() and p.suffix.lower() in EXTENSIONS and
+                    not p.is_symlink() and not deferred_fever(p) and
+                    not p.name.endswith('.checksum.json') and
+                    not any(part.startswith('.') or part == '__MACOSX' for part in p.relative_to(directory).parts)
+                    for p in paths)
+                completed_files = 0
+                for path in paths:
                     if job:
                         job.check()
-                    if not path.is_file() or path.is_symlink():
+                    if not path.is_file() or path.is_symlink() or deferred_fever(path):
                         continue
                     if path.name.endswith('.checksum.json') or path.name == 'wiki-pages.zip':
+                        continue
+                    if any(part.startswith('.') or part == '__MACOSX' for part in path.relative_to(directory).parts):
                         continue
                     if path.suffix.lower() not in EXTENSIONS:
                         result['errors'].append({'path': str(path), 'error': 'Unsupported file type'})
@@ -117,38 +147,72 @@ class Retrieval:
                         with path.open('rb') as stream:
                             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
                         previous = db.execute('SELECT hash FROM files WHERE path=?', (name,)).fetchone()
-                        missing_vectors = db.execute('SELECT 1 FROM chunks WHERE path=? AND vector IS NULL LIMIT 1', (name,)).fetchone()
+                        missing_vectors = (db.execute('SELECT 1 FROM chunks WHERE path=? AND vector IS NULL LIMIT 1',
+                                                      (name,)).fetchone() if embedding and previous else None)
                         if previous and previous[0] == digest and not (embedding and missing_vectors):
                             result['unchanged'] += 1
+                            completed_files += 1
+                            if job:
+                                job.emit('indexing', path=name, chunks=0, file_complete=True, unchanged=True,
+                                         completed_files=completed_files, total_files=total_files)
                             continue
-                        # A savepoint keeps the old file index intact if parsing fails mid-file.
-                        db.execute('SAVEPOINT importing')
-                        db.execute('DELETE FROM chunks WHERE path=?', (name,))
+                        partial = resumable and previous is None
+                        progress = db.execute('SELECT hash,chunks FROM index_progress WHERE path=?', (name,)).fetchone()
+                        offset = progress['chunks'] if partial and progress and progress['hash'] == digest else 0
+                        if partial:
+                            if not offset:
+                                if progress:
+                                    db.execute('DELETE FROM chunks WHERE path=?', (name,))
+                                db.execute('INSERT OR REPLACE INTO index_progress VALUES (?,?,?,0)', (name, digest, str(directory)))
+                                db.commit()
+                        else:
+                            # Preserve complete older versions if an update cannot be parsed.
+                            db.execute('SAVEPOINT importing')
+                            if previous or progress:
+                                db.execute('DELETE FROM chunks WHERE path=?', (name,))
                         batch = []
                         count = 0
+                        last_progress = time.monotonic()
 
                         def flush():
+                            nonlocal last_progress
                             if not batch:
                                 return
                             vectors = embedding.encode([r[1] for r in batch], normalize_embeddings=True) if embedding else [None]*len(batch)
-                            for (key, text, provenance), vector in zip(batch, vectors):
-                                db.execute('INSERT INTO chunks(path,key,text,provenance,vector) VALUES (?,?,?,?,?)',
-                                    (name, key, text, json.dumps(provenance), vector.astype('float32').tobytes() if vector is not None else None))
+                            db.executemany('INSERT INTO chunks(path,key,text,provenance,vector) VALUES (?,?,?,?,?)',
+                                ((name, key, text, json.dumps(provenance),
+                                  vector.astype('float32').tobytes() if vector is not None else None)
+                                 for (key, text, provenance), vector in zip(batch, vectors)))
                             batch.clear()
+                            if partial:
+                                db.execute('UPDATE index_progress SET chunks=? WHERE path=?', (count, name))
+                                db.commit()
+                            if job and time.monotonic()-last_progress >= .5:
+                                job.emit('indexing', path=name, chunks=count, file_complete=False,
+                                         completed_files=completed_files, total_files=total_files)
+                                last_progress = time.monotonic()
                         for record in documents(path):
                             if job:
                                 job.check()
-                            batch.append(record); count += 1
-                            if len(batch) >= 64:
+                            count += 1
+                            if count <= offset:
+                                continue
+                            batch.append(record)
+                            if len(batch) >= batch_size:
                                 flush()
                         flush()
                         db.execute('INSERT OR REPLACE INTO files VALUES (?,?,?)', (name, digest, str(directory)))
-                        db.execute('RELEASE importing'); db.commit()
+                        db.execute('DELETE FROM index_progress WHERE path=?', (name,))
+                        if not partial:
+                            db.execute('RELEASE importing')
+                        db.commit()
                         result['indexed'] += 1
+                        completed_files += 1
                         if not count:
                             result['excluded'] += 1
                         if job:
-                            job.emit('indexing', path=name, chunks=count)
+                            job.emit('indexing', path=name, chunks=count, file_complete=True,
+                                     completed_files=completed_files, total_files=total_files)
                     except Exception as exc:
                         from .jobs import Cancelled
                         if isinstance(exc, Cancelled):
@@ -157,14 +221,23 @@ class Retrieval:
                         db.rollback()
                         result['errors'].append({'path': name, 'error': str(exc)})
                 for row in db.execute('SELECT path FROM files WHERE root=?', (str(directory),)).fetchall():
+                    if deferred_fever(Path(row[0])) and Path(row[0]).is_file():
+                        continue
                     if row[0] not in seen:
                         db.execute('DELETE FROM chunks WHERE path=?', (row[0],))
                         db.execute('DELETE FROM files WHERE path=?', (row[0],)); result['deleted'] += 1
+                for row in db.execute('SELECT path FROM index_progress WHERE root=?', (str(directory),)).fetchall():
+                    if deferred_fever(Path(row[0])) and Path(row[0]).is_file():
+                        continue
+                    if row[0] not in seen:
+                        db.execute('DELETE FROM chunks WHERE path=?', (row[0],))
+                        db.execute('DELETE FROM index_progress WHERE path=?', (row[0],))
                 db.commit()
-                self.rebuild_vectors(db, job)
+                if semantic:
+                    self.rebuild_vectors(db, job)
             finally:
                 db.close()
-        result['mode'] = 'hybrid' if embedding else 'keyword-only: download embeddings, then reindex'
+        result['mode'] = 'hybrid' if embedding else 'keyword-only'
         return result
 
     def rebuild_vectors(self, db, job=None):
@@ -206,14 +279,15 @@ class Retrieval:
                         job.emit('vector_index', indexed=count-remaining, total=count)
             temporary = self.root / 'vectors-manifest.tmp'
             temporary.write_text(json.dumps({'format': 'numpy-v1', 'shards': shards}))
-            temporary.replace(manifest)
+            with self.vector_lock:
+                temporary.replace(manifest)
+                for name in old['shards']:
+                    old_directory = (self.root/name).parent
+                    if old_directory != self.root:
+                        shutil.rmtree(old_directory, ignore_errors=True)
         except BaseException:
             shutil.rmtree(generation, ignore_errors=True)
             raise
-        for name in old['shards']:
-            old_directory = (self.root/name).parent
-            if old_directory != self.root:
-                shutil.rmtree(old_directory, ignore_errors=True)
         if not shards:
             generation.rmdir()
 
@@ -221,7 +295,7 @@ class Retrieval:
         words = re.findall(r'\w+', query, flags=re.UNICODE)[:32]
         if not words:
             return []
-        with self.lock:
+        with self.vector_lock:
             db = self.connection()
             try:
                 rows = db.execute('SELECT rowid FROM search WHERE search MATCH ? ORDER BY rank LIMIT 40',
@@ -229,7 +303,7 @@ class Retrieval:
                 ranks = {r[0]: 1/(60+i) for i, r in enumerate(rows, 1)}
                 mode = 'keyword'
                 manifest = self.root / 'vectors.json'
-                if manifest.exists() and self.embedding():
+                if not self.indexing.is_set() and manifest.exists() and self.embedding():
                     import numpy as np
                     catalog = json.loads(manifest.read_text())
                     if catalog.get('format') != 'numpy-v1':
@@ -252,6 +326,8 @@ class Retrieval:
                         ranks[ident] = ranks.get(ident, 0) + 1/(60+i)
                     mode = 'hybrid'
                 result = []
+                if self.indexing.is_set() or db.execute('SELECT 1 FROM index_progress LIMIT 1').fetchone():
+                    mode = 'keyword · partial index; available passages only'
                 for ident in sorted(ranks, key=ranks.get, reverse=True)[:limit]:
                     row = db.execute('SELECT * FROM chunks WHERE id=?', (ident,)).fetchone()
                     if row:

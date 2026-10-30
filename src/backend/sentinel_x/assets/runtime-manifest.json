@@ -1,5 +1,5 @@
 {
-  "llama_cpp": {"commit": "8642541b255bfb5dc39cd351a178be09013a55d6", "release": "v0.8.0"},
+  "llama_cpp": {"commit": "8642541b255bfb5dc39cd351a178be09013a55d6", "release": "v0.8.0", "binary_release": "b11960"},
   "qwen": {"repo": "unsloth/Qwen3.5-9B-GGUF", "revision": "3885219b6810b007914f3a7950a8d1b469d598a5", "files": ["Qwen3.5-9B-Q4_K_M.gguf"]},
   "embedding": {"repo": "BAAI/bge-small-en-v1.5", "revision": null, "files": ["config.json", "model.safetensors", "modules.json", "sentence_bert_config.json", "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json", "vocab.txt", "1_Pooling/config.json"]},
   "fever": {"evidence": "https://fever.ai/download/fever/wiki-pages.zip", "train": "https://fever.ai/download/fever/train.jsonl", "development": "https://fever.ai/download/fever/shared_task_dev.jsonl"}

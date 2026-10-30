@@ -1,21 +1,22 @@
 """Native Qt Widgets desktop. No JavaScript, browser engine, or local API server."""
 from __future__ import annotations
 
-import html
 from pathlib import Path
 import sys
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QPainter, QColor, QPen
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget,
     QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QTreeWidgetItem, QVBoxLayout, QWidget, QMenu, QScrollArea,
 )
 
-from .graphs import read_posts, suggest_mapping
+from .activity_ui import job_summary, update_job_rows
+from .runtime_ui import RuntimePanel
+from .conversation_ui import MessageComposer, MessageEditor, GenerationStatus, transcript_html
 from .service import Service
 from .ui import escape, tree, table, CheckpointControls
 
@@ -29,22 +30,52 @@ class Window(CheckpointControls, QMainWindow):
         self.service = service or Service()
         self.conversation = None; self.attached = set(); self.watched = {}; self.reported = set()
         self.dialogs = []; self.latest_jobs = []; self.closed = False
+        self.rendered_conversation = None; self.rendered_signature = None
+        self.thinking_expanded = {}
+        self.loading_draft = False; self.import_feedback = {}
         self.setWindowTitle('Sentinel-X · Evidence & propagation'); self.resize(1320, 900)
-        self.setMinimumSize(1000, 700)
+        self.setMinimumSize(900, 650)
         root = QWidget(); self.setCentralWidget(root); layout = QHBoxLayout(root)
-        self.navigation = QListWidget(); self.navigation.setFixedWidth(190)
-        self.navigation.addItems(['Conversations', 'Resources', 'Skills', 'Models', 'Activity'])
+        self.navigation = QListWidget(); self.navigation.setFixedWidth(140)
+        self.navigation.addItems(['Chat', 'Evidence', 'Settings'])
         left = QVBoxLayout(); left.addWidget(self.heading('Sentinel-X', 'Local research workspace'))
         left.addWidget(self.navigation); left.addWidget(self.button('Open data directory', self.open_data))
+        self.activity_button = self.button('Background work', self.open_activity)
+        left.addWidget(self.activity_button)
         layout.addLayout(left)
         right = QVBoxLayout(); layout.addLayout(right, 1)
         self.pages = QStackedWidget(); right.addWidget(self.pages, 1)
         self.notice = QLabel('Local data · Local inference'); self.notice.setWordWrap(True)
-        right.addWidget(self.notice)
+        footer = QHBoxLayout(); footer.addWidget(self.notice, 1)
+        self.dismiss_notice = self.button('Dismiss message', lambda: self.notice.clear())
+        footer.addWidget(self.dismiss_notice); right.addLayout(footer)
         self.chat_page(); self.resources_page(); self.skills_page(); self.models_page(); self.activity_page()
+        # Nest existing capability pages within Settings, preserving all operations.
+        skills, models, activity = [self.pages.widget(i) for i in (2, 3, 4)]
+        for widget in (skills, models, activity):
+            self.pages.removeWidget(widget)
+        self.settings_tabs = QTabWidget()
+        for widget, title in ((models, 'Models'), (skills, 'Skills')):
+            scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setWidget(widget)
+            self.settings_tabs.addTab(scroll, title)
+        self.pages.addWidget(self.settings_tabs)
+        self.activity_dialog = QDialog(self); self.activity_dialog.setWindowTitle('Background work')
+        self.activity_dialog.resize(1080, 620)
+        self.activity_dialog.setMinimumSize(760, 480)
+        QVBoxLayout(self.activity_dialog).addWidget(activity)
+        # Removing a page from QStackedWidget leaves it explicitly hidden.
+        # Reparenting into a layout does not clear that state.
+        activity.show()
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex); self.navigation.setCurrentRow(0)
         self.timer = QTimer(self); self.timer.setInterval(800); self.timer.timeout.connect(self.poll); self.timer.start()
         self.refresh(); self.render_messages()
+        last = self.service.store.setting('ui:last_conversation')
+        if any(c['id'] == last for c in self.service.store.conversations()):
+            self.conversation = last
+            self.refresh_conversations(); self.render_messages()
+        self.load_draft()
+        self.sidebar.setVisible(self.service.store.setting('ui:sidebar', True))
+        self.attachments_panel.setVisible(self.service.store.setting('ui:attachments', False))
         if auto_setup:
             QTimer.singleShot(0, lambda: self.run(self.offer_setup))
 
@@ -79,7 +110,12 @@ class Window(CheckpointControls, QMainWindow):
 
     def watch(self, ident, callback=None):
         self.watched[ident] = callback
-        self.notice.setText('Queued background work'); return ident
+        return ident
+
+    def open_activity(self):
+        self._poll()
+        self.activity_dialog.show(); self.activity_dialog.raise_()
+        self.activity_dialog.activateWindow()
 
     def dialog(self, title, content):
         dialog = QDialog(self); dialog.setWindowTitle(title); dialog.resize(850, 650)
@@ -88,27 +124,62 @@ class Window(CheckpointControls, QMainWindow):
         return dialog
 
     def chat_page(self):
-        layout = self.page('Conversations', 'Assess factual support and potential reach as separate questions.')
+        layout = self.page('Chat', 'Explore factual support and potential reach.')
+        toolbar = QHBoxLayout()
+        toolbar.addWidget(self.button('Conversations', lambda: self.toggle_panel(self.sidebar, 'ui:sidebar')))
+        self.attachment_button = self.button('Datasets · 0 attached', lambda: self.toggle_panel(self.attachments_panel, 'ui:attachments'))
+        toolbar.addWidget(self.attachment_button)
+        toolbar.addStretch()
+        menu_button = QPushButton('Conversation actions')
+        menu = QMenu(menu_button)
+        for label, callback in [('Rename', self.rename), ('Export Markdown', self.export_conversation), ('Delete', self.delete)]:
+            menu.addAction(label, lambda checked=False, fn=callback: self.run(fn))
+        menu_button.setMenu(menu); toolbar.addWidget(menu_button)
+        layout.addLayout(toolbar)
         splitter = QSplitter(); layout.addWidget(splitter, 1)
-        conversations = QWidget(); column = QVBoxLayout(conversations)
+        conversations = QWidget(); self.sidebar = conversations; column = QVBoxLayout(conversations)
+        conversations.setMinimumWidth(150)
         self.conversation_search = QLineEdit(); self.conversation_search.setPlaceholderText('Search conversations…')
         self.conversation_search.textChanged.connect(lambda: self.run(self.refresh_conversations))
         column.addWidget(self.conversation_search)
         self.conversation_list = QListWidget(); self.conversation_list.currentItemChanged.connect(self.select_conversation)
         column.addWidget(self.conversation_list)
-        row = QHBoxLayout(); row.addWidget(self.button('New', self.new_conversation)); row.addWidget(self.button('Rename', self.rename)); row.addWidget(self.button('Delete', self.delete))
-        column.addLayout(row); splitter.addWidget(conversations)
-        column.addWidget(self.button('Export conversation (.md)', self.export_conversation))
+        column.addWidget(self.button('New conversation', self.new_conversation)); splitter.addWidget(conversations)
         chat = QWidget(); column = QVBoxLayout(chat)
-        self.transcript = QTextBrowser(); self.transcript.setOpenExternalLinks(False); column.addWidget(self.transcript, 1)
-        self.live = QLabel(); self.live.setWordWrap(True); self.live.setMaximumHeight(70); column.addWidget(self.live)
-        self.message_input = QTextEdit(); self.message_input.setPlaceholderText('Ask about claims, virality, or both…'); self.message_input.setMaximumHeight(115)
-        column.addWidget(self.message_input)
-        row = QHBoxLayout(); row.addWidget(self.button('Import JSON / JSONL posts', self.import_posts)); row.addStretch()
-        row.addWidget(self.button('Stop response', self.stop_chat)); self.send_button = self.button('Send message ↑', self.send); row.addWidget(self.send_button)
+        chat.setMinimumWidth(300)
+        self.transcript = QTextBrowser(); self.transcript.setOpenExternalLinks(False)
+        self.transcript.document().setDefaultStyleSheet('a {color:#83d9b7;} h3 {color:#b9eed9;}')
+        self.transcript.setOpenLinks(False); self.transcript.anchorClicked.connect(lambda url: self.run(lambda: self.message_action(url)))
+        column.addWidget(self.transcript, 1)
+        self.editor = MessageEditor(); self.editor.saved.connect(self.save_edit)
+        self.editor.cancelled.connect(self.close_editor)
+        self.generation = GenerationStatus(); column.addWidget(self.generation)
+        self.live = self.generation.label
+        self.generation.restore_requested.connect(lambda: self.run(self.restore_request))
+        self.generation.details_requested.connect(lambda: self.dialog('Generation details', tree(self.generation.job)))
+        self.setup_hint = self.button('Chat setup · check models and downloads', lambda: self.offer_setup(force=True))
+        column.addWidget(self.setup_hint)
+        self.message_input = MessageComposer(); self.message_input.setPlaceholderText('Ask about claims, virality, or both…'); self.message_input.setMaximumHeight(115)
+        self.message_input.submitted.connect(lambda: self.run(self.send))
+        self.compose_stack = QStackedWidget()
+        self.compose_stack.addWidget(self.message_input); self.compose_stack.addWidget(self.editor)
+        self.compose_stack.setFixedHeight(115)
+        column.addWidget(self.compose_stack)
+        self.draft_timer = QTimer(self); self.draft_timer.setSingleShot(True); self.draft_timer.setInterval(350)
+        self.draft_timer.timeout.connect(lambda: self.run(self.save_draft))
+        self.message_input.textChanged.connect(self.draft_changed)
+        row = QHBoxLayout(); row.addWidget(self.button('Import posts', self.import_posts))
+        self.thinking = QCheckBox('Thinking · Off'); self.thinking.setAccessibleName('Thinking')
+        self.thinking.setObjectName('thinkingSwitch')
+        self.thinking.setToolTip('Think before answering. Responses may take longer. Changes apply to the next request.')
+        self.thinking.toggled.connect(self.thinking_changed); row.addWidget(self.thinking); row.addStretch()
+        self.stop_button = self.button('Stop', self.stop_chat); self.stop_button.setEnabled(False); row.addWidget(self.stop_button)
+        self.send_button = self.button('Send ↑', self.send); row.addWidget(self.send_button)
         column.addLayout(row); splitter.addWidget(chat)
-        attachments = QWidget(); column = QVBoxLayout(attachments)
-        column.addWidget(QLabel('POST DATASETS · select attachments'))
+        attachments = QWidget(); self.attachments_panel = attachments; column = QVBoxLayout(attachments)
+        attachments.setMinimumWidth(190)
+        datasets_label = QLabel('Post datasets · select attachments'); datasets_label.setWordWrap(True)
+        column.addWidget(datasets_label)
         self.graph_filter = QLineEdit(); self.graph_filter.setPlaceholderText('Filter cascades…'); self.graph_filter.textChanged.connect(self.filter_graphs); column.addWidget(self.graph_filter)
         self.graph_list = QTreeWidget(); self.graph_list.setHeaderLabels(['Cascade', 'Posts', 'Metadata'])
         self.graph_list.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -117,7 +188,7 @@ class Window(CheckpointControls, QMainWindow):
         self.graph_list.itemChanged.connect(self.toggle_attachment); column.addWidget(self.graph_list)
         column.addWidget(self.button('Inspect / review graph', self.inspect_selected))
         label = QLabel('Truth ≠ reach\n\nEstimated graphs require explicit review. Their predictions are experimental.'); label.setWordWrap(True); column.addWidget(label)
-        splitter.addWidget(attachments); splitter.setSizes([210, 650, 290])
+        splitter.addWidget(attachments); splitter.setSizes([180, 800, 240])
 
     def refresh_conversations(self):
         self.conversation_list.blockSignals(True); self.conversation_list.clear()
@@ -127,12 +198,14 @@ class Window(CheckpointControls, QMainWindow):
         self.conversation_list.blockSignals(False)
 
     def select_conversation(self, current, previous):
+        self.save_draft()
         self.conversation = current.data(ROLE) if current else None
-        self.attached.clear(); self.run(self.refresh_graphs); self.render_messages()
+        self.load_draft(); self.render_messages()
 
     def new_conversation(self):
+        self.save_draft()
         self.conversation = self.service.store.create_conversation()['id']; self.attached.clear()
-        self.refresh_conversations(); self.refresh_graphs(); self.render_messages()
+        self.load_draft(); self.refresh_conversations(); self.render_messages()
 
     def rename(self):
         if not self.conversation: return
@@ -154,44 +227,157 @@ class Window(CheckpointControls, QMainWindow):
     def delete(self):
         if not self.conversation: return
         if QMessageBox.question(self, 'Delete conversation', 'Delete this conversation and its messages?') != QMessageBox.StandardButton.Yes: return
-        self.service.delete_conversation(self.conversation); self.conversation = None
-        self.refresh_conversations(); self.render_messages()
+        self.service.delete_conversation(self.conversation)
+        self.service.store.configure('draft:'+self.conversation, {})
+        self.conversation = None
+        self.load_draft(); self.refresh_conversations(); self.render_messages()
 
     def send(self):
         text = self.message_input.toPlainText().strip()
         if not text: return
         if not self.conversation:
             self.conversation = self.service.store.create_conversation(text[:70])['id']
-        ident = self.service.chat(self.conversation, text, sorted(self.attached))
-        self.watch(ident); self.message_input.clear(); self.refresh_conversations()
+            self.service.store.configure('draft:None', {})
+        ident = self.service.chat(self.conversation, text, sorted(self.attached), self.thinking.isChecked())
+        self.send_button.setEnabled(False); self.stop_button.setEnabled(True)
+        self.watch(ident); self.message_input.clear(); self.save_draft(); self.refresh_conversations()
+        self._poll()
 
     def stop_chat(self):
-        for job in self.latest_jobs:
+        for job in self.service.jobs.list():
             if job['kind'] == f'chat:{self.conversation}' and job['status'] not in DONE:
+                self.cancelling_job = job['id']
                 self.service.cancel(job['id'])
+        self._poll()
+
+    def toggle_panel(self, panel, key):
+        visible = panel.isHidden()
+        if visible and self.width() < 1100:
+            other = self.sidebar if panel is self.attachments_panel else self.attachments_panel
+            other.hide()
+        panel.setVisible(visible)
+        self.service.store.configure(key, visible)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'attachments_panel') and self.width() < 1100:
+            if not self.attachments_panel.isHidden() and not self.sidebar.isHidden():
+                self.sidebar.hide()
+
+    def draft_changed(self):
+        if not self.loading_draft:
+            self.draft_timer.start()
+
+    def thinking_changed(self, checked):
+        self.thinking.setText('Thinking · On' if checked else 'Thinking · Off')
+        self.draft_changed()
+
+    def save_draft(self):
+        self.draft_timer.stop()
+        self.service.store.configure('draft:'+str(self.conversation), {
+            'text': self.message_input.toPlainText(), 'graph_ids': sorted(self.attached),
+            'thinking': self.thinking.isChecked()})
+        self.service.store.configure('ui:last_conversation', self.conversation)
+
+    def load_draft(self):
+        self.draft_timer.stop()
+        self.loading_draft = True
+        draft = self.service.store.setting('draft:'+str(self.conversation), {})
+        self.message_input.setPlainText(draft.get('text', ''))
+        self.attached = set(draft.get('graph_ids', []))
+        self.thinking.setChecked(draft.get('thinking', False))
+        self.loading_draft = False
+        self.close_editor()
+        self.refresh_graphs()
+        self._poll()
 
     def render_messages(self):
-        if not self.conversation:
-            self.transcript.setHtml('<h1>Understand the claim.<br>Explore its potential reach.</h1><p>Import posts, attach cascades, and ask a question. Resources ground factual judgments; GraphSAGE forecasts recorded cascade growth.</p>'); return
-        pieces = []
-        for message in self.service.store.messages(self.conversation):
-            if message['role'] == 'tool': continue
-            pieces.append(f'<h4>{"YOU" if message["role"] == "user" else "Sentinel-X"}</h4><p>{escape(message["content"])}</p>')
-            data = message['data']
-            for claim in data.get('claims', []):
-                pieces.append(f'<blockquote><b>{escape(claim["verdict"].replace("_", " ").upper())}</b><p>{escape(claim["claim"])}</p><p>{escape(claim.get("explanation", ""))}</p><small>{escape(" · ".join(claim["citations"]))}</small></blockquote>')
-            for tool in data.get('tools', []):
-                if tool['name'] != 'graphsage_predict': continue
-                result = tool['result']
-                if isinstance(result, dict): pieces.append('<p>'+escape(result.get('error', result))+'</p>'); continue
-                for p in result:
-                    warning = '<p><b>Estimated graph — experimental prediction</b></p>' if p['estimated'] else ''
-                    pieces.append(f'<blockquote><h4>GRAPHSAGE · {escape(p["cascade_id"])}</h4><b>{p["viral_probability"]:.1%} viral probability</b><p>≥{p["size_threshold"]} recorded posts · First {p["observation_minutes"]} minutes</p>{warning}</blockquote>')
-            for e in data.get('evidence', []):
-                source = e['provenance'].get('page', e['path'])
-                pieces.append(f'<p><b>{escape(e["citation"])}</b> · {escape(source)} · {escape(e["provenance"])}</p><blockquote>{escape(e["text"])}</blockquote>')
-            pieces.append('<hr>')
-        self.transcript.setHtml(''.join(pieces)); self.transcript.verticalScrollBar().setValue(self.transcript.verticalScrollBar().maximum())
+        messages = self.service.store.messages(self.conversation) if self.conversation else []
+        live_job = next((j for j in reversed(list(self.service.jobs.live.values()))
+            if j.data['kind'] == f'chat:{self.conversation}'), None)
+        preview = live_job.preview() if live_job and live_job.data['status'] != 'completed' else None
+        if preview:
+            preview['key'] = 'live-'+live_job.data['id']
+        signature = repr((messages, preview, self.thinking_expanded))
+        changed_conversation = self.rendered_conversation != self.conversation
+        if signature == self.rendered_signature and not changed_conversation:
+            return
+        scroll = self.transcript.verticalScrollBar()
+        old = scroll.value()
+        follow = changed_conversation or scroll.maximum()-old < 35
+        self.transcript.setHtml(transcript_html(messages, preview, self.thinking_expanded))
+        scroll.setValue(scroll.maximum() if follow else old)
+        self.rendered_signature = signature
+        self.rendered_conversation = self.conversation
+        conversation = self.conversation
+        def restore_scroll():
+            if not self.closed and self.conversation == conversation and self.rendered_signature == signature:
+                scroll.setValue(scroll.maximum() if follow else old)
+        QTimer.singleShot(0, restore_scroll)
+
+    def message_action(self, url):
+        action, value = url.toString().split(':', 1)
+        if action == 'action':
+            if value == 'import': self.import_posts()
+            elif value == 'evidence': self.navigation.setCurrentRow(1)
+            return
+        if action == 'thinking':
+            active = next((j for j in self.service.jobs.live.values() if 'live-'+j.data['id'] == value), None)
+            default = active.preview()['active'] if active else False
+            self.thinking_expanded[value] = not self.thinking_expanded.get(value, default)
+            self.render_messages()
+            return
+        ident = int(value.split(':')[0])
+        message = next((m for m in self.service.store.messages(self.conversation) if m['id'] == ident), None)
+        if not message: raise ValueError('Message no longer exists')
+        if action == 'edit':
+            self.compose_stack.setCurrentWidget(self.editor); self.compose_stack.setFixedHeight(215)
+            self.setup_hint.hide(); self.send_button.setEnabled(False)
+            self.editor.open_message(message)
+        elif action == 'regenerate':
+            self.save_draft()
+            conversation, job = self.service.regenerate(self.conversation, ident)
+            self.conversation = conversation
+            self.load_draft(); self.watch(job); self.refresh_conversations(); self.render_messages()
+        elif action == 'history':
+            self.dialog('Message revision history', tree(message['data'].get('revisions', [])))
+        elif action == 'citation':
+            evidence = message['data']['evidence'][int(value.split(':')[1])]
+            view = QTextBrowser()
+            view.setPlainText(evidence['citation']+' · '+evidence['path']+'\n\n'+
+                              evidence['text']+'\n\n'+str(evidence.get('provenance', {})))
+            self.dialog('Evidence source', view)
+        elif action == 'details':
+            self.dialog('Original research record', tree(message['data']))
+
+    def save_edit(self, ident, text, revision):
+        try:
+            self.service.edit_message(self.conversation, ident, text, revision)
+        except Exception as exc:
+            self.editor.error.setText(str(exc))
+            return
+        self.close_editor(); self.render_messages(); self.refresh_conversations()
+
+    def close_editor(self):
+        self.compose_stack.setCurrentWidget(self.message_input); self.compose_stack.setFixedHeight(115)
+        self.refresh_models(sync_controls=False)
+        self.send_button.setEnabled(not any(j.data['kind'] == f'chat:{self.conversation}' and
+            j.data['status'] not in DONE for j in self.service.jobs.live.values()))
+
+    def restore_request(self):
+        request = self.generation.job.get('request', {})
+        if not request: return
+        editing = self.compose_stack.currentWidget() is self.editor
+        if self.message_input.toPlainText().strip() or editing:
+            question = 'Replace the current draft with this request?'
+            if editing: question += '\nThis also closes the unsaved message edit.'
+            if QMessageBox.question(self, 'Restore request', question) != QMessageBox.StandardButton.Yes:
+                return
+        self.close_editor()
+        self.message_input.setPlainText(request['text'])
+        self.attached = set(request.get('graph_ids', []))
+        self.thinking.setChecked(request.get('thinking_enabled', False))
+        self.refresh_graphs(); self.save_draft(); self.message_input.setFocus()
 
     def refresh_graphs(self):
         current = self.graph_list.currentItem(); ident = current.data(0, ROLE) if current else None
@@ -203,6 +389,7 @@ class Window(CheckpointControls, QMainWindow):
             self.graph_list.addTopLevelItem(item)
             if g['id'] == ident: self.graph_list.setCurrentItem(item)
         self.graph_list.blockSignals(False); self.filter_graphs()
+        self.attachment_button.setText(f'Datasets · {len(self.attached)} attached')
 
     def filter_graphs(self):
         for i in range(self.graph_list.topLevelItemCount()):
@@ -211,29 +398,58 @@ class Window(CheckpointControls, QMainWindow):
     def toggle_attachment(self, item, column):
         ident = item.data(0, ROLE)
         self.attached.add(ident) if item.checkState(0) == Qt.CheckState.Checked else self.attached.discard(ident)
+        self.attachment_button.setText(f'Datasets · {len(self.attached)} attached'); self.draft_changed()
 
     def import_posts(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Import posts', '', 'Post datasets (*.json *.jsonl)')
-        if not path: return
-        rows = read_posts(Path(path)); mapping = suggest_mapping(rows)
-        dialog = QDialog(self); dialog.setWindowTitle('Map post fields'); dialog.resize(800, 520)
-        layout = QVBoxLayout(dialog); layout.addWidget(QLabel(f'{len(rows)} posts · {path}'))
-        form = QFormLayout(); choices = {}
-        keys = sorted(set().union(*(r.keys() for r in rows[:100])))
-        for field, value in mapping.items():
-            combo = QComboBox(); combo.addItem('Missing', None)
+        if path:
+            target = self.conversation
+            self.watch(self.service.preview_posts(path), lambda preview: self.import_preview(path, preview, target))
+            self.notice.setText('Reading dataset in the background…')
+
+    def import_preview(self, path, preview, target):
+        dialog = QDialog(self); dialog.setWindowTitle('Import posts'); dialog.resize(720, 540)
+        layout = QVBoxLayout(dialog)
+        label = QLabel(f'{preview["count"]} posts · {Path(path).name}'); label.setWordWrap(True); layout.addWidget(label)
+        form = QFormLayout(); choices = {}; keys = preview['keys']
+        names = {'id': 'Post ID (required)', 'text': 'Text (required)', 'author_id': 'Author',
+                 'timestamp': 'Timestamp', 'parent_id': 'Parent post', 'cascade_id': 'Cascade'}
+        for field, value in preview['mapping'].items():
+            combo = QComboBox(); combo.addItem('Not provided', None)
             for key in keys: combo.addItem(key, key)
-            combo.setCurrentIndex(combo.findData(value)); choices[field] = combo; form.addRow(field, combo)
+            combo.setCurrentIndex(combo.findData(value)); choices[field] = combo
+            form.addRow(names[field], combo)
         layout.addLayout(form)
-        combine = QCheckBox('Group these records as one cascade for estimation'); layout.addWidget(combine)
-        layout.addWidget(table(keys, [[r.get(k, '') for k in keys] for r in rows[:3]]))
+        combine = QCheckBox('Group posts as one cascade for estimation'); layout.addWidget(combine)
+        layout.addWidget(table(keys, [[r.get(k, '') for k in keys] for r in preview['samples']]))
+        error = QLabel(); error.setWordWrap(True); layout.addWidget(error)
         def apply(proposed):
+            if not dialog.isVisible(): return
             for key, value in proposed.items(): choices[key].setCurrentIndex(choices[key].findData(value))
         def commit():
-            ids = self.service.import_posts(path, {key: combo.currentData() for key, combo in choices.items()}, combine.isChecked())
-            self.attached.update(ids); dialog.accept(); self.refresh_graphs()
-        row = QHBoxLayout(); row.addWidget(self.button('Ask Qwen to map fields', lambda: self.watch(self.service.map_posts(path), apply)))
-        row.addWidget(self.button('Import', commit)); row.addWidget(self.button('Cancel', dialog.reject)); layout.addLayout(row)
+            try:
+                mapping = {key: combo.currentData() for key, combo in choices.items()}
+                job_id = self.service.import_posts_background(path, mapping, combine.isChecked())
+            except Exception as exc:
+                error.setText(str(exc)); return
+            import_button.setEnabled(False)
+            error.setText('Validating and importing in the background…')
+            def done(ids):
+                # Complete against the originating conversation, even after navigation.
+                if self.conversation == target:
+                    self.attached.update(ids); self.refresh_graphs(); self.save_draft()
+                else:
+                    draft = self.service.store.setting('draft:'+str(target), {})
+                    draft['graph_ids'] = sorted(set(draft.get('graph_ids', [])) | set(ids))
+                    self.service.store.configure('draft:'+str(target), draft)
+                self.notice.setText(f'Imported {preview["count"]} posts in {len(ids)} cascade(s). Attached to the originating conversation.')
+                dialog.accept()
+            self.watch(job_id, done)
+            self.import_feedback[job_id] = (error, import_button)
+        row = QHBoxLayout()
+        row.addWidget(self.button('Suggest field mapping', lambda: self.watch(self.service.map_posts(path), apply)))
+        import_button = self.button('Import and attach', commit); row.addWidget(import_button)
+        row.addWidget(self.button('Close', dialog.reject)); layout.addLayout(row)
         self.dialogs.append(dialog); dialog.show()
 
     def inspect_selected(self):
@@ -265,13 +481,18 @@ class Window(CheckpointControls, QMainWindow):
         self.service.accept(ident); dialog.accept(); self.refresh_graphs()
 
     def resources_page(self):
-        layout = self.page('Resources', 'Local evidence from TXT, Markdown, JSON, JSONL and CSV. FEVER evidence is optional.')
+        layout = self.page('Resources', 'Add a folder of local documents, then index it to ground answers in evidence.')
         self.resource_path = QLineEdit(self.service.status()['resources']); layout.addWidget(self.resource_path)
         row = QHBoxLayout(); row.addWidget(self.button('Choose resources directory', self.choose_resources))
         row.addWidget(self.button('Index / update directory', lambda: self.watch(self.service.index(self.resource_path.text()))))
-        row.addWidget(self.button('Download & index FEVER', lambda: self.watch(self.service.fever())))
+        self.fever_status = QLabel(); self.fever_status.setWordWrap(True); layout.addWidget(self.fever_status)
+        fever_row = QHBoxLayout()
+        self.fever_download = self.button('Download FEVER only', lambda: self.watch(self.service.fever()))
+        self.fever_index = self.button('Build / resume FEVER index', lambda: self.watch(self.service.build_fever_index()))
+        fever_row.addWidget(self.fever_download); fever_row.addWidget(self.fever_index)
+        layout.addLayout(fever_row)
         layout.addLayout(row)
-        label = QLabel('FEVER is a large historical Wikipedia corpus. Claims/labels are kept outside the evidence index. Semantic search uses precompiled NumPy with memory-mapped vector files.'); label.setWordWrap(True); layout.addWidget(label)
+        label = QLabel('Search your indexed documents here. FEVER is an optional, large historical Wikipedia corpus; its evaluation labels are excluded from evidence.'); label.setWordWrap(True); layout.addWidget(label)
         self.search_input = QLineEdit(); self.search_input.setPlaceholderText('Search for a claim or topic'); layout.addWidget(self.search_input)
         layout.addWidget(self.button('Search evidence', lambda: self.watch(self.service.search(self.search_input.text()), self.show_evidence)))
         self.evidence_view = QTextBrowser(); layout.addWidget(self.evidence_view, 1)
@@ -315,25 +536,33 @@ class Window(CheckpointControls, QMainWindow):
         if path: self.service.import_skill(path); self.refresh_skills()
 
     def models_page(self):
-        layout = self.page('Models', 'llama.cpp is included with the application. Download model weights and optional evidence here.')
-        layout.addWidget(self.button('Set up downloads…', lambda: self.offer_setup(force=True)))
+        layout = self.page('Models', 'Set up chat, evidence search, and virality prediction.')
         self.model_status = QLabel(); self.model_status.setWordWrap(True); layout.addWidget(self.model_status)
-        row = QHBoxLayout()
-        for key, label in [('qwen', 'Download / verify Qwen'), ('embedding', 'Download / verify embeddings')]:
-            row.addWidget(self.button(label, lambda name=key: self.watch(self.service.download(name))))
-        layout.addLayout(row)
-        row = QHBoxLayout(); row.addWidget(self.button('Import local GGUF', self.import_model)); row.addWidget(self.button('Choose llama-server', self.choose_runtime)); row.addWidget(self.button('Verify generation & tools', lambda: self.watch(self.service.smoke())))
-        layout.addLayout(row)
+        layout.addWidget(self.button('Set up downloads…', lambda: self.offer_setup(force=True)))
+        self.runtime_panel = RuntimePanel(self.service, self); layout.addWidget(self.runtime_panel)
+        layout.addWidget(self.button('Import local chat model (.gguf)', self.import_model))
+        self.checkpoint_controls(layout)
+        layout.addWidget(self.button('Open separate GraphSAGE trainer', self.open_trainer))
+        layout.addWidget(self.button('Refresh trained checkpoints', self.refresh_checkpoints))
+        advanced_button = QPushButton('Advanced settings ▸'); advanced_button.setCheckable(True)
+        layout.addWidget(advanced_button)
+        advanced = QWidget(); self.advanced = advanced; inner = QVBoxLayout(advanced)
+        inner.addWidget(self.button('Choose llama-server executable', self.choose_runtime))
+        inner.addWidget(self.button('Verify generation and tools', lambda: self.watch(self.service.smoke())))
         form = QFormLayout()
         self.context = QComboBox()
         for tokens in (2048, 4096, 8192, 16384, 32768): self.context.addItem(str(tokens), tokens)
         self.acceleration = QComboBox(); self.acceleration.addItem('Automatic GPU offload', 'auto'); self.acceleration.addItem('CPU only', '0')
-        form.addRow('Context tokens', self.context); form.addRow('Acceleration', self.acceleration); layout.addLayout(form)
-        layout.addWidget(self.button('Apply runtime settings', lambda: self.apply_settings()))
-        self.checkpoint_controls(layout)
-        layout.addWidget(self.button('Open Sentinel-X Trainer (separate app)', self.open_trainer))
-        layout.addWidget(self.button('Refresh trained checkpoints', self.refresh_checkpoints))
-        label = QLabel('A quantized 9B model still requires several GB of memory; CPU operation can be slow. GPU acceleration depends on the bundled runtime and installed drivers. Imports and inference stay on this device.'); label.setWordWrap(True); layout.addWidget(label); layout.addStretch()
+        form.addRow('Context tokens', self.context); form.addRow('Acceleration', self.acceleration); inner.addLayout(form)
+        self.thinking_budget = QSpinBox(); self.thinking_budget.setRange(64, 2048); self.thinking_budget.setSingleStep(64)
+        form.addRow('Maximum thinking tokens', self.thinking_budget)
+        inner.addWidget(self.button('Apply runtime settings', self.apply_settings))
+        self.runtime_details = QLabel(); self.runtime_details.setWordWrap(True); inner.addWidget(self.runtime_details)
+        layout.addWidget(advanced); advanced.hide()
+        advanced_button.toggled.connect(advanced.setVisible)
+        advanced_button.toggled.connect(lambda checked: advanced_button.setText('Advanced settings ▾' if checked else 'Advanced settings ▸'))
+        note = QLabel('Chat runs on this device. The 9B model needs several GB of memory; CPU responses can take longer.')
+        note.setWordWrap(True); layout.addWidget(note); layout.addStretch()
 
     def open_trainer(self):
         import os
@@ -363,26 +592,100 @@ class Window(CheckpointControls, QMainWindow):
         if path: self.service.configure(llama_path=path); self.refresh_models()
 
     def apply_settings(self):
-        self.service.configure(context=self.context.currentData(), gpu_layers=self.acceleration.currentData()); self.refresh_models()
+        self.service.configure(context=self.context.currentData(), gpu_layers=self.acceleration.currentData(),
+                               thinking_budget=self.thinking_budget.value()); self.refresh_models()
 
-    def refresh_models(self):
+    def refresh_models(self, sync_controls=True):
         status = self.service.status()
-        self.model_status.setText(f'Runtime: {status["llama_path"] or "not installed"}\nQwen: {status["qwen_path"] or "not installed"}\nEmbeddings: {"downloaded" if status["models"]["embedding"]["ready"] else "not downloaded"}\nData: {status["root"]}')
-        self.context.setCurrentIndex(self.context.findData(status['context']))
-        self.acceleration.setCurrentIndex(self.acceleration.findData(status['gpu_layers']))
+        self.refresh_fever(status['fever'])
+        self.runtime_panel.refresh()
+        runtime_ready = bool(status['llama_path'] and Path(status['llama_path']).is_file())
+        chat_ready = runtime_ready and bool(status['qwen_path'] and Path(status['qwen_path']).is_file())
+        self.setup_hint.setVisible(not chat_ready)
+        self.model_status.setText('Chat: '+('Ready' if chat_ready else 'Setup needed')+
+            '\nSemantic search: '+('Ready' if status['models']['embedding']['ready'] else 'Keyword search available · embeddings optional')+
+            '\nVirality: '+('Checkpoint selected' if status['checkpoint'] else 'Choose a trained checkpoint'))
+        self.runtime_details.setText(f'Runtime: {status["llama_path"] or "missing"}\nModel: {status["qwen_path"] or "missing"}\nData: {status["root"]}')
+        if sync_controls:
+            self.context.setCurrentIndex(self.context.findData(status['context']))
+            self.acceleration.setCurrentIndex(self.acceleration.findData(status['gpu_layers']))
+            self.thinking_budget.setValue(status['thinking_budget'])
+
+    def refresh_fever(self, fever=None):
+        fever = fever or self.service.models.fever_status()
+        active = next((j for j in list(self.service.jobs.live.values()) if
+            (j.data['kind'] in ('fever', 'fever-index') or
+             j.data['kind'] == 'setup' and j.data.get('request', {}).get('fever')) and
+            j.data['status'] in ('running', 'queued')), None)
+        self.fever_status.setText('FEVER: '+('Working · see Background work for progress or cancel to resume later.' if active else
+            'Indexed · available for evidence search.' if fever['indexed'] else
+            'Downloaded · indexing deferred or incomplete. Build/resume to use all of it in chat.' if fever['downloaded'] else
+            'Not downloaded. You can save the archive now and index it later.'))
+        self.fever_download.setEnabled(not fever['downloaded'] and not active)
+        self.fever_index.setEnabled(fever['downloaded'] and not active)
 
     def activity_page(self):
-        layout = self.page('Activity', 'Downloads, imports, indexing, inference, and training run in the background.')
-        self.activity = QTreeWidget(); self.activity.setHeaderLabels(['Job', 'Status', 'Progress / error']); layout.addWidget(self.activity)
-        row = QHBoxLayout(); row.addWidget(self.button('Cancel selected job', self.cancel_selected)); row.addWidget(self.button('View job details', self.job_details)); layout.addLayout(row)
+        layout = self.page('Background work', 'See what is running, how far it has progressed, and what to do if it stops.')
+        self.activity = QTreeWidget()
+        self.activity.setHeaderLabels(['Task', 'Status', 'Current step / details', 'Progress', 'Time'])
+        self.activity.setRootIsDecorated(False); self.activity.setWordWrap(True)
+        self.activity.setColumnWidth(0, 200); self.activity.setColumnWidth(3, 140)
+        self.activity.setColumnWidth(4, 65)
+        self.activity.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.activity.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.activity.header().setStretchLastSection(False)
+        self.activity.itemSelectionChanged.connect(self.update_activity_selection)
+        layout.addWidget(self.activity, 1)
+        self.activity_selection = QLabel('No background tasks yet. Downloads and research tasks will appear here.')
+        self.activity_selection.setTextFormat(Qt.TextFormat.PlainText)
+        self.activity_selection.setWordWrap(True); layout.addWidget(self.activity_selection)
+        row = QHBoxLayout()
+        self.cancel_job_button = self.button('Cancel task', self.cancel_selected)
+        self.retry_job_button = self.button('Retry / resume task', self.retry_selected)
+        self.job_details_button = self.button('View details', self.job_details)
+        for button in (self.cancel_job_button, self.retry_job_button, self.job_details_button):
+            button.setEnabled(False); row.addWidget(button)
+        layout.addLayout(row)
+
+    def update_activity_selection(self):
+        item = self.activity.currentItem()
+        job = next((j for j in self.latest_jobs if item and j['id'] == item.data(0, ROLE)), None)
+        self.cancel_job_button.setEnabled(bool(job and job['status'] not in DONE and not job.get('cancelling')))
+        self.job_details_button.setEnabled(job is not None)
+        retry = bool(job and job['status'] in ('failed', 'cancelled', 'interrupted') and
+                     (job['kind'] in ('fever', 'fever-index', 'download:qwen', 'download:embedding') or
+                      job['kind'].startswith('runtime-download:') or
+                      (job['kind'] == 'setup' and job.get('request'))))
+        self.retry_job_button.setEnabled(retry)
+        if job:
+            summary = job_summary(job, {c['id']: c['title'] for c in self.service.store.conversations()})
+            self.activity_selection.setText(summary['name']+' · '+summary['status']+'\n'+summary['detail'])
+        elif self.latest_jobs:
+            self.activity_selection.setText('Select a task for more information. Progress bars describe the current file or phase.')
+        else:
+            self.activity_selection.setText('No background tasks yet. Downloads and research tasks will appear here.')
 
     def cancel_selected(self):
         item = self.activity.currentItem()
-        if item: self.service.cancel(item.data(0, ROLE))
+        if item:
+            self.service.cancel(item.data(0, ROLE)); self._poll()
+
+    def retry_selected(self):
+        item = self.activity.currentItem()
+        if item:
+            self.watch(self.service.retry_download(item.data(0, ROLE))); self._poll()
 
     def job_details(self):
         item = self.activity.currentItem()
-        if item: self.dialog('Background job details', tree(self.service.jobs.get(item.data(0, ROLE))))
+        if not item: return
+        job = self.service.jobs.get(item.data(0, ROLE))
+        summary = job_summary(job, {c['id']: c['title'] for c in self.service.store.conversations()})
+        tabs = QTabWidget(); readable = QTextBrowser()
+        readable.setPlainText(summary['name']+'\nStatus: '+summary['status']+
+            '\nTime: '+summary['elapsed']+'\n\n'+summary['detail']+
+            '\n\nProgress refers to the current file or phase. Verification and indexing may follow a download.')
+        tabs.addTab(readable, 'Task summary'); tabs.addTab(tree(job), 'Diagnostics')
+        self.dialog('Background job details', tabs)
 
     def poll(self):
         if self.closed: return
@@ -390,35 +693,38 @@ class Window(CheckpointControls, QMainWindow):
 
     def _poll(self):
         jobs = self.service.jobs.list(); self.latest_jobs = jobs
-        current = self.activity.currentItem(); selected = current.data(0, ROLE) if current else None
-        self.activity.clear(); changed = False
+        self.refresh_fever()
+        titles = {c['id']: c['title'] for c in self.service.store.conversations()}
+        update_job_rows(self.activity, jobs, titles)
+        self.update_activity_selection()
         for job in jobs:
-            last = job['events'][-1] if job['events'] else {}
-            progress = job.get('error', '')
-            if last.get('event') == 'download':
-                progress = f'{last["file"]}: {last["downloaded"]/1024**2:.0f} MB'
-            item = QTreeWidgetItem([job['kind'], job['status'], progress]); item.setData(0, ROLE, job['id']); self.activity.addTopLevelItem(item)
-            if job['id'] == selected: self.activity.setCurrentItem(item)
             if job['status'] in DONE and job['id'] not in self.reported:
-                self.reported.add(job['id']); changed = True
-                if job['status'] in ('failed', 'interrupted'): self.notice.setText(f'{job["kind"]}: {job.get("error", job["status"])}')
+                self.reported.add(job['id'])
+                if job['kind'] in ('setup', 'fever', 'fever-index') or job['kind'].startswith(('download:', 'runtime-')):
+                    self.refresh_models(sync_controls=False)
         for ident, callback in list(self.watched.items()):
             job = self.service.jobs.get(ident)
-            if job['status'] in DONE:
-                del self.watched[ident]
-                if job['status'] == 'completed' and callback: self.run(lambda fn=callback, result=job['result']: fn(result))
-        chat = next((j for j in jobs if j['kind'] == f'chat:{self.conversation}' and j['status'] not in DONE), None)
-        self.send_button.setEnabled(chat is None)
-        if chat:
-            text = ''.join(e.get('text', '') for e in chat['events'] if e['event'] == 'token')
-            self.live.setText('Working locally… '+text[-220:])
-        else: self.live.clear()
+            if job['status'] not in DONE: continue
+            del self.watched[ident]
+            if job['status'] == 'completed' and callback:
+                self.run(lambda fn=callback, result=job['result']: fn(result))
+            elif job['status'] in ('failed', 'interrupted'):
+                self.notice.setText(f'{job_summary(job, titles)["name"]}: {job.get("error", job["status"])} · Open Background work for details.')
+            feedback = self.import_feedback.pop(ident, None)
+            if feedback and job['status'] != 'completed':
+                feedback[0].setText(job.get('error', job['status'])); feedback[1].setEnabled(True)
+        chat = next((j for j in jobs if j['kind'] == f'chat:{self.conversation}'), None)
+        if chat and chat['id'] == getattr(self, 'cancelling_job', None): chat['cancelling'] = True
+        active_chat = chat is not None and chat['status'] not in DONE
+        self.send_button.setEnabled(not active_chat and self.compose_stack.currentWidget() is not self.editor)
+        self.stop_button.setEnabled(active_chat and not chat.get('cancelling'))
+        self.generation.update_job(chat)
+        self.render_messages()
         selected_checkpoint = self.service.store.setting('checkpoint')
         if selected_checkpoint != getattr(self, 'last_checkpoint', None):
             self.last_checkpoint = selected_checkpoint; self.refresh_checkpoints()
-        if changed: self.refresh(); self.render_messages()
         active = sum(j['status'] not in DONE for j in jobs)
-        if active: self.notice.setText(f'{active} background job(s) · Activity shows progress and errors')
+        self.activity_button.setText(f'Background work · {active}' if active else 'Background work')
 
     def refresh(self):
         self.refresh_conversations(); self.refresh_graphs(); self.refresh_skills(); self.refresh_checkpoints(); self.refresh_models()
@@ -427,7 +733,9 @@ class Window(CheckpointControls, QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.service.store.root)))
 
     def closeEvent(self, event):
-        self.closed = True; self.timer.stop(); self.service.close(); event.accept()
+        self.save_draft(); self.closed = True
+        for timer in self.findChildren(QTimer): timer.stop()
+        self.service.close(); event.accept()
 
 
 STYLE = '''
@@ -440,6 +748,10 @@ QHeaderView::section {background:#243540;color:#b8cbd5;border:0;padding:8px;}
 QListWidget::item {padding:12px;} QListWidget::item:selected {background:#2a5148;color:#aeebd2;}
 QTabBar::tab {background:#233743;padding:10px;} QTabBar::tab:selected {background:#365b51;}
 QLabel {padding:3px;} QSplitter::handle {background:#30434d;}
+QPushButton:focus,QCheckBox:focus,QLineEdit:focus,QTextEdit:focus {border:2px solid #83d9b7;}
+QCheckBox#thinkingSwitch::indicator {width:32px;height:20px;border:1px solid #69818d;border-radius:10px;background:#344854;}
+QCheckBox#thinkingSwitch::indicator:checked {background:#83d9b7;border:2px solid #dce8ed;}
+QTextBrowser {padding:18px;}
 '''
 
 

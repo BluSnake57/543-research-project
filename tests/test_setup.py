@@ -19,7 +19,7 @@ class SetupTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(); self.service = Service(Path(self.temp.name))
 
     def tearDown(self):
-        self.service.close(); self.service.jobs.pool.shutdown(wait=True); self.temp.cleanup()
+        self.service.close(); self.service.jobs.shutdown(wait=True); self.temp.cleanup()
 
     def test_skip_starts_no_download_and_prompt_returns_even_after_prior_setup(self):
         self.service.store.configure('setup_started', True)
@@ -66,3 +66,36 @@ class SetupTests(unittest.TestCase):
             self.assertTrue(needs_prompt(self.service))
         finally:
             window.close(); self.app.processEvents()
+
+    def test_hide_setup_is_persisted_and_manual_reopen_can_restore_startup_prompt(self):
+        from sentinel_x.desktop import Window
+        dialog = SetupDialog(self.service)
+        dialog.hide_at_startup.setChecked(True); dialog.skip.click()
+        self.assertFalse(needs_prompt(self.service))
+        self.service.close(); self.service.jobs.shutdown(wait=True)
+        self.service = Service(Path(self.temp.name))
+        window = Window(self.service)
+        try:
+            window.show(); self.app.processEvents()
+            self.assertFalse(hasattr(window, 'setup_guide'))
+            window.offer_setup(force=True)
+            self.assertTrue(window.setup_guide.isVisible())
+            self.assertTrue(window.setup_guide.hide_at_startup.isChecked())
+            window.setup_guide.hide_at_startup.setChecked(False)
+            window.setup_guide.close()
+            self.assertTrue(needs_prompt(self.service))
+            self.assertEqual(self.service.jobs.list(), [])
+        finally:
+            window.close(); self.app.processEvents()
+
+    def test_fever_setup_defaults_to_download_only_with_explicit_index_option(self):
+        dialog = SetupDialog(self.service)
+        try:
+            dialog.choices['qwen'].setChecked(False); dialog.choices['embedding'].setChecked(False)
+            dialog.choices['fever'].setChecked(True)
+            self.assertTrue(dialog.index_fever.isEnabled()); self.assertFalse(dialog.index_fever.isChecked())
+            with patch.object(self.service, 'setup', return_value='fixture') as setup:
+                dialog.start()
+            setup.assert_called_once_with([], True, False)
+        finally:
+            dialog.close()
