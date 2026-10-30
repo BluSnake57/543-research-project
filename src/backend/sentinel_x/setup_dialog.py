@@ -72,6 +72,10 @@ class SetupDialog(QDialog):
         self.finished.connect(lambda result: self.timer.stop())
         self.finished.connect(lambda result: self.runtime_panel.timer.stop())
 
+    def closeEvent(self, event):
+        self.timer.stop(); self.runtime_panel.timer.stop()
+        super().closeEvent(event)
+
     def start(self):
         keys = [key for key in ('qwen', 'embedding') if self.choices[key].isChecked()]
         fever = self.choices['fever'].isChecked()

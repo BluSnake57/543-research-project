@@ -63,7 +63,7 @@ class NativeServices(unittest.TestCase):
         self.service.delete_conversation(c['id']); self.assertEqual(self.service.store.conversations(), [])
         with self.assertRaises(ValueError): self.service.configure(context=1)
 
-    def test_legacy_database_remains_accessible_after_rename(self):
+    def test_legacy_database_migrates_and_remains_accessible_after_rename(self):
         from sentinel_x.state import Store, data_directory
         root = self.root/'veritas'
         old = Store(root)
@@ -71,9 +71,11 @@ class NativeServices(unittest.TestCase):
         (root/'sentinel-x.sqlite').rename(root/'veritas.sqlite')
         reopened = Store(root)
         self.assertEqual(reopened.conversations()[0]['id'], conversation['id'])
-        self.assertFalse((root/'sentinel-x.sqlite').exists())
+        self.assertTrue((root/'sentinel-x.sqlite').exists())
         with patch.dict(os.environ, {'XDG_DATA_HOME': str(self.root)}, clear=True), patch('sys.platform', 'linux'):
-            self.assertEqual(data_directory(), root)
+            current = data_directory()
+            self.assertEqual(current, self.root/'sentinel-x')
+            self.assertEqual(Store(current).conversations()[0]['id'], conversation['id'])
 
     def test_numpy_semantic_index_and_migration(self):
         class Embedding:

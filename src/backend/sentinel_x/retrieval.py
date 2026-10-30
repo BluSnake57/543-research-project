@@ -113,7 +113,7 @@ class Retrieval:
             raise ValueError('Resources directory does not exist')
         managed_fever = (self.store.root/'resources'/'fever').resolve()
         def deferred_fever(path):
-            return not directory.is_relative_to(managed_fever) and path.resolve().is_relative_to(managed_fever)
+            return not directory.is_relative_to(managed_fever) and self.store.live_path(path).resolve().is_relative_to(managed_fever)
         result = {'indexed': 0, 'unchanged': 0, 'deleted': 0, 'errors': [], 'excluded': 0}
         if job:
             job.emit('stage', stage='Preparing evidence search model' if semantic else
@@ -142,14 +142,20 @@ class Retrieval:
                     if path.suffix.lower() not in EXTENSIONS:
                         result['errors'].append({'path': str(path), 'error': 'Unsupported file type'})
                         continue
-                    name = str(path.resolve()); seen.add(name)
+                    name = str(path.resolve())
+                    aliases = self.store.path_aliases(name)
+                    seen.update(aliases)
                     try:
                         with path.open('rb') as stream:
                             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-                        previous = db.execute('SELECT hash FROM files WHERE path=?', (name,)).fetchone()
+                        marks = ','.join('?' for _ in aliases)
+                        previous = db.execute('SELECT path,hash FROM files WHERE path IN ('+marks+')', aliases).fetchone()
+                        prior_progress = db.execute('SELECT path FROM index_progress WHERE path IN ('+marks+')', aliases).fetchone()
+                        name = previous['path'] if previous else prior_progress['path'] if prior_progress else name
+                        seen.add(name)
                         missing_vectors = (db.execute('SELECT 1 FROM chunks WHERE path=? AND vector IS NULL LIMIT 1',
                                                       (name,)).fetchone() if embedding and previous else None)
-                        if previous and previous[0] == digest and not (embedding and missing_vectors):
+                        if previous and previous['hash'] == digest and not (embedding and missing_vectors):
                             result['unchanged'] += 1
                             completed_files += 1
                             if job:
@@ -220,14 +226,16 @@ class Retrieval:
                             raise
                         db.rollback()
                         result['errors'].append({'path': name, 'error': str(exc)})
-                for row in db.execute('SELECT path FROM files WHERE root=?', (str(directory),)).fetchall():
-                    if deferred_fever(Path(row[0])) and Path(row[0]).is_file():
+                roots = self.store.path_aliases(directory)
+                marks = ','.join('?' for _ in roots)
+                for row in db.execute('SELECT path FROM files WHERE root IN ('+marks+')', roots).fetchall():
+                    if deferred_fever(Path(row[0])) and self.store.live_path(row[0]).is_file():
                         continue
                     if row[0] not in seen:
                         db.execute('DELETE FROM chunks WHERE path=?', (row[0],))
                         db.execute('DELETE FROM files WHERE path=?', (row[0],)); result['deleted'] += 1
-                for row in db.execute('SELECT path FROM index_progress WHERE root=?', (str(directory),)).fetchall():
-                    if deferred_fever(Path(row[0])) and Path(row[0]).is_file():
+                for row in db.execute('SELECT path FROM index_progress WHERE root IN ('+marks+')', roots).fetchall():
+                    if deferred_fever(Path(row[0])) and self.store.live_path(row[0]).is_file():
                         continue
                     if row[0] not in seen:
                         db.execute('DELETE FROM chunks WHERE path=?', (row[0],))
@@ -333,7 +341,7 @@ class Retrieval:
                     if row:
                         provenance = json.loads(row['provenance'])
                         result.append({'citation': f'E{ident}', 'text': row['text'],
-                                       'path': row['path'], 'provenance': provenance, 'retrieval': mode})
+                                       'path': str(self.store.live_path(row['path'])), 'provenance': provenance, 'retrieval': mode})
                 return result
             finally:
                 db.close()

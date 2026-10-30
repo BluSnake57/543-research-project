@@ -190,6 +190,16 @@ Application code lives in `src/backend/sentinel_x`: `desktop.py` assembles the a
 
 Local conversations, resources, model catalogs, checkpoints, indexes, and logs use the platform application-data directory. Open it from the sidebar or set `SENTINEL_X_DATA_DIR` to override it. Existing conversations/checkpoints remain compatible. Reindex an older HNSW evidence index to migrate it to NumPy shards.
 
-When upgrading from the former Veritas name, Sentinel-X automatically reuses an existing legacy data directory/database. The former `VERITAS_DATA_DIR` override is also recognized; `SENTINEL_X_DATA_DIR` takes precedence.
+Close the assistant and trainer before the first launch after upgrading from Veritas. Sentinel-X moves the legacy data directory to `sentinel-x` on Linux or `Sentinel-X` on Windows/macOS, and migrates the database to `sentinel-x.sqlite`. Downloaded weights, FEVER files, checkpoints, conversations, and settings move with it; large downloads are not copied or fetched again. SQLite backup preserves committed WAL records, and the original database is retained for recovery. Runtime/model paths are updated. Historical audit snapshots and evidence IDs are preserved, so complete and partial evidence indexes can be reused without starting over. Distinct existing databases are never merged or overwritten. Explicit data-directory overrides stay at the path you selected; the former `VERITAS_DATA_DIR` override is still recognized, while `SENTINEL_X_DATA_DIR` takes precedence.
 
-Keep weights, datasets, credentials, and generated indexes out of Git. `AGENTS.md` remains unchanged. [Skill authoring](docs/SKILLS.md) describes the supported extension format.
+Local settings, `.env` secrets, workspace/IDE settings, imported data/skills, model weights, downloaded datasets/runtimes, checkpoints, caches, databases, and generated indexes are ignored by Git. For a data directory inside the checkout, use `SENTINEL_X_DATA_DIR=.data`; that directory is ignored. Source manifests and bundled skill definitions remain versioned. `AGENTS.md` remains unchanged. [Skill authoring](docs/SKILLS.md) describes the supported extension format.
+
+The project and GitHub repository remain **543-research-project**; the application is **Sentinel-X**. In this restricted workspace, `.git` is an empty read-only mount, so Git history is stored separately and backed up in the ignored `sentinel-x-development.bundle`. To restore normal Git commands in this project folder, run the following from your normal terminal outside the restricted session:
+
+```bash
+cd /home/blusnake/Documents/git/543-research-project
+python scripts/restore_git.py
+git push -u origin main
+```
+
+The recovery script restores history from the local bundle and sets `origin` to `BluSnake57/543-research-project`. It preserves working files and edits and refuses to replace unknown Git metadata. It does nothing when this folder is already a working Git checkout.

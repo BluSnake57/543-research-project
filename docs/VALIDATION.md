@@ -2,7 +2,7 @@
 
 ## Verified after the native Python conversion
 
-All 134 Python tests pass with Python 3.14 and installed dependencies; none are skipped.
+All 144 Python tests pass with Python 3.14 and installed dependencies; none are skipped.
 
 - Native PySide6/Qt Widgets window creation, the assistant’s three navigation pages and the separate trainer, conversations, and graph attachments using the offscreen platform plugin.
 - Pure-Python wheel build with bundled assets, followed by native-window startup from an isolated extraction of that wheel.
@@ -93,7 +93,7 @@ The new exact short-message prompt was run offline with the real installed Qwen 
 
 ## Git history
 
-The workspace's `.git` directory is empty and mounted read-only. Milestone commits are maintained in `/tmp/veritas-development.git` with this workspace as the work tree and exported to `/tmp/sentinel-x-development.bundle`. An ignored copy named `sentinel-x-development.bundle` is retained at the workspace root.
+The workspace's `.git` directory is empty and mounted read-only. Milestone commits are maintained in `/tmp/sentinel-x-development.git` with this workspace as the work tree and exported to `/tmp/sentinel-x-development.bundle`. An ignored copy named `sentinel-x-development.bundle` is retained at the workspace root. The GitHub repository remains `BluSnake57/543-research-project`; application naming does not rename it.
 
 ```bash
 git bundle list-heads sentinel-x-development.bundle
@@ -101,3 +101,11 @@ git clone sentinel-x-development.bundle sentinel-x
 ```
 
 This preserves source history without modifying the protected `.git` directory. The bundle excludes weights, datasets, and generated indexes.
+
+`python scripts/restore_git.py` restores normal Git metadata in this project folder when run outside the restricted session. It preserves working files, restores the main branch from the bundle, configures the existing GitHub remote, and refuses to overwrite unknown metadata. Its integration tests use actual local Git repositories and bundles, including preserved local edits and an already-working checkout. Running `git init` directly in this session fails because the `.git` mount is read-only.
+
+## Sentinel-X data migration and local-file protection
+
+Ten additional tests verify the actual legacy-directory move and database upgrade, active model/runtime path rebasing, preservation of historical prompt snapshots, stable evidence citation IDs, complete-index reuse, partial-index resumption without duplicate passages, committed WAL data, retry after an interrupted migration, refusal to merge distinct existing data, and retention of original databases. Moving existing model files preserves their inode in the Linux fixture: weights are not copied or downloaded. Existing environment overrides remain compatible. Older assistant and trainer instances must be closed before the first upgraded launch. Live user storage was not migrated from this restricted session.
+
+Actual Git ignore tests cover private environment/workspace settings, model weights, downloaded datasets/runtimes, imported graphs/skills, checkpoints, indexes, and application data. They also verify that source configuration, bundled skills, `.env.example`, and the resource-directory placeholder remain eligible for version control. Tracked files were inspected and contain no downloaded models, private settings, or user databases. Python compilation and Git whitespace checks pass. Ruff is not installed in this environment.

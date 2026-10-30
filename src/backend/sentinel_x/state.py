@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import uuid
+from .migration import migrate_storage
 
 
 def data_directory() -> Path:
@@ -23,14 +24,13 @@ def data_directory() -> Path:
     else:
         parent = Path(os.environ.get('XDG_DATA_HOME', Path.home()/'.local/share'))
         current, legacy = parent/'sentinel-x', parent/'veritas'
-    if not (current/'sentinel-x.sqlite').exists() and (legacy/'veritas.sqlite').exists():
-        return legacy
-    return current
+    return migrate_storage(current, legacy)
 
 
 class Store:
     def __init__(self, root: Path):
-        self.root = root
+        root = Path(root).expanduser().resolve()
+        self.root = migrate_storage(root)
         for name in ('resources', 'models', 'graphs', 'checkpoints', 'skills', 'runtime', 'index'):
             (root / name).mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
@@ -67,6 +67,20 @@ class Store:
         with self.connection() as db:
             row = db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
         return json.loads(row[0]) if row else default
+
+    def live_path(self, value):
+        """Display/access moved files while preserving historical database identities."""
+        path = Path(value)
+        for legacy in self.setting('legacy_data_roots', []):
+            if path.is_relative_to(legacy):
+                return self.root/path.relative_to(legacy)
+        return path
+
+    def path_aliases(self, value):
+        path = Path(value)
+        if not path.is_relative_to(self.root): return [str(path)]
+        return [str(path), *(str(Path(old)/path.relative_to(self.root))
+                             for old in self.setting('legacy_data_roots', []))]
 
     def configure(self, key, value):
         with self.connection() as db:
