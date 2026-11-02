@@ -1,0 +1,11 @@
+dataset,model,semantic_features,f1,accuracy,precision,recall,pr_auc
+Twitter15,GraphSAGE,None,0.7679,0.8834,0.7679,0.7679,0.8554
+Twitter15,GraphSAGE+Qwen,All 5,0.7407,0.8744,0.7692,0.7143,0.8479
+Twitter15,GraphSAGE+Qwen,Urgency,0.7523,0.8789,0.7736,0.7321,0.8423
+Twitter15,GraphSAGE+Qwen,Sensationalism,0.7521,0.8700,0.7213,0.7857,0.8510
+Twitter15,GraphSAGE+Qwen,Emotional Language,0.7928,0.8969,0.8000,0.7857,0.8442
+Twitter15,GraphSAGE+Qwen,Authority Framing,0.7500,0.8744,0.7500,0.7500,0.8421
+Twitter15,GraphSAGE+Qwen,Conspiracy Framing,0.7818,0.8924,0.7963,0.7679,0.8522
+Twitter16,GraphSAGE,None,0.7368,0.8780,0.8077,0.6774,0.7704
+Twitter16,GraphSAGE+Qwen,All 5,0.7368,0.8780,0.8077,0.6774,0.7687
+Twitter16,GraphSAGE+Qwen,Emotional Language,0.7368,0.8780,0.8077,0.6774,0.7727

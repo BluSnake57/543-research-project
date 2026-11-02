@@ -1,0 +1,25 @@
+{
+  "project": "Sentinel-X",
+  "task": "Early social-media cascade virality prediction",
+  "datasets": ["Twitter15", "Twitter16"],
+  "observation_window_minutes": 60,
+  "twitter15_viral_size_threshold": 464,
+  "twitter16_viral_size_threshold": 475,
+  "gnn": "GraphSAGE",
+  "llm": "Qwen3.5-9B",
+  "semantic_features": [
+    "urgency",
+    "sensationalism",
+    "emotional_language",
+    "authority_framing",
+    "conspiracy_framing"
+  ],
+  "selected_demo_feature": "emotional_language",
+  "selected_checkpoint": "fe44637dfc4d49fe9cd402c4ce6cc21d",
+  "selected_model_variant": "graphsage_qwen_ablation",
+  "training_seed": 42,
+  "training_device": "NVIDIA CUDA",
+  "demo_probability": 0.7531231641769409,
+  "demo_decision_cutoff": 0.712752640247345,
+  "demo_prediction": "viral"
+}
