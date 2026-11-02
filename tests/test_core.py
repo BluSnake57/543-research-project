@@ -99,9 +99,9 @@ class GraphTests(TemporaryTest):
         (directory/'label.txt').write_text('false:100\n')
         (directory/'tree/100.txt').write_text(
             "['ROOT','ROOT',0]->['u1','100',0]\n"
-            "['u1','100',0]->['u2','100',2]\n"
-            "['u1','100',0]->['u2','100',2]\n"
-            "['u2','100',2]->['u3','200',-1]\n"
+            "['u1','100',0]->['u2','100',0]\n"
+            "['u1','100',0]->['u2','100',0]\n"
+            "['u2','100',0]->['u3','200',-1]\n"
             "this is malformed\n")
         value = list(native_twitter(directory))[0]
         self.assertNotIn('error', value)
