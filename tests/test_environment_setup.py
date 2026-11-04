@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch, Mock
 
 from sentinel_x.graphs import FEATURE_VERSION
 from sentinel_x.learning import torch_modules
@@ -115,6 +116,143 @@ class EnvironmentSetupTests(unittest.TestCase):
         metadata = setup.validate_checkpoint(path)
         self.assertEqual(metadata["llm_feature_names"], ["emotional_language"])
         self.assertEqual(metadata["config"]["threshold"], 464)
+
+    def test_settings_reset_keeps_downloads_chats_and_operational_metadata(self):
+        self.store.configure("context", 16384)
+        self.store.configure("ui:last_conversation", "old")
+        self.store.configure("installed_runtimes", {"cpu": {"executable": "somewhere"}})
+        self.store.configure("fever_ready", True)
+        self.store.configure("draft:example", {"text": "Keep this"})
+        self.store.create_conversation("Keep me")
+        model = self.store.root / "models/example.gguf"
+        model.write_bytes(b"weights")
+        self.assertEqual(setup.main(["--reset-settings", "--data-dir", str(self.store.root)]), 0)
+        self.assertIsNone(self.store.setting("context"))
+        self.assertIsNone(self.store.setting("ui:last_conversation"))
+        self.assertTrue(self.store.setting("installed_runtimes"))
+        self.assertTrue(self.store.setting("fever_ready"))
+        self.assertEqual(self.store.setting("draft:example")["text"], "Keep this")
+        self.assertEqual(len(self.store.conversations()), 1)
+        self.assertEqual(model.read_bytes(), b"weights")
+
+    def test_factory_reset_removes_downloads_and_data_but_preserves_source(self):
+        self.store.configure("context", 16384)
+        self.store.create_conversation("Delete me")
+        (self.store.root / "datasets").mkdir()
+        for folder in ("models", "resources", "datasets", "runtime", "index", "checkpoints"):
+            (self.store.root / folder / "download").write_bytes(b"data")
+        original = self.source / "original.pt"
+        original.write_bytes(b"preserved")
+        self.assertEqual(
+            setup.main(
+                [
+                    "--factory-reset",
+                    "--data-dir",
+                    str(self.store.root),
+                    "--weights-dir",
+                    str(self.source),
+                ]
+            ),
+            0,
+        )
+        self.assertEqual(self.store.conversations(), [])
+        self.assertIsNone(self.store.setting("context"))
+        self.assertFalse(list(self.store.root.rglob("download")))
+        self.assertEqual(original.read_bytes(), b"preserved")
+        self.assertEqual(list((self.store.root / "checkpoints").iterdir()), [])
+
+    def test_reset_rejects_unrecognized_storage_and_protected_paths(self):
+        important = self.source / "important.txt"
+        important.write_text("keep")
+        with self.assertRaisesRegex(ValueError, "unrecognized"):
+            setup.main(["--factory-reset", "--data-dir", str(self.source)])
+        for target in (setup.ROOT, Path.home(), setup.ROOT.parent):
+            with self.assertRaisesRegex(ValueError, "protected"):
+                setup.validate_reset_path(target)
+        with self.assertRaisesRegex(ValueError, "protected"):
+            setup.main(
+                [
+                    "--factory-reset",
+                    "--data-dir",
+                    str(self.store.root),
+                    "--weights-dir",
+                    str(self.store.root / "checkpoints"),
+                ]
+            )
+        self.assertEqual(important.read_text(), "keep")
+
+    def test_factory_reset_does_not_follow_external_directory_links(self):
+        external = self.root / "external"
+        external.mkdir()
+        (external / "keep").write_text("keep")
+        link = self.store.root / "models/linked"
+        try:
+            link.symlink_to(external, target_is_directory=True)
+        except OSError:
+            self.skipTest("Directory symlinks unavailable")
+        setup.main(["--factory-reset", "--data-dir", str(self.store.root)])
+        self.assertTrue((external / "keep").exists())
+        link.symlink_to(external, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            setup.main(["--factory-reset", "--data-dir", str(link)])
+
+    def test_reset_venv_recreates_environment_and_reinstalls(self):
+        environment = self.root / "venv"
+        environment.mkdir()
+        (environment / "pyvenv.cfg").write_text("home = example")
+        old = environment / "old-package"
+        old.write_text("stale")
+
+        def create(path):
+            self.assertFalse(old.exists())
+            path.mkdir()
+            (path / "pyvenv.cfg").write_text("home = example")
+            python = setup.environment_python(path)
+            python.parent.mkdir()
+            python.touch()
+
+        with (
+            patch.object(setup.venv, "EnvBuilder") as builder,
+            patch.object(setup, "run") as run,
+            patch.object(setup.subprocess, "run", return_value=Mock(returncode=0)),
+        ):
+            builder.return_value.create.side_effect = create
+            self.assertEqual(
+                setup.main(
+                    ["--reset-venv", "--venv", str(environment), "--data-dir", str(self.store.root)]
+                ),
+                0,
+            )
+        self.assertEqual(run.call_count, 3)
+        self.assertIn("install", run.call_args_list[1].args[0])
+
+    def test_reset_venv_rejects_active_environment_and_non_venv(self):
+        with self.assertRaisesRegex(ValueError, "running Python"):
+            setup.validate_environment_reset(Path(setup.sys.prefix))
+        with self.assertRaisesRegex(ValueError, "pyvenv.cfg"):
+            setup.validate_environment_reset(self.source)
+
+    def test_conflicting_flags_fail_before_changing_data(self):
+        self.store.configure("context", 16384)
+        for flags in (
+            ["--reset-venv", "--skip-install"],
+            ["--factory-reset", "--download-models"],
+            ["--reset-settings", "--runtime", "cpu"],
+        ):
+            with self.assertRaises(SystemExit) as result:
+                setup.main([*flags, "--data-dir", str(self.store.root)])
+            self.assertEqual(result.exception.code, 2)
+        self.assertEqual(self.store.setting("context"), 16384)
+
+    def test_skip_install_still_checks_and_configures(self):
+        with (
+            patch.object(setup, "run") as run,
+            patch.object(setup.subprocess, "run", return_value=Mock(returncode=0)) as child,
+        ):
+            setup.main(["--skip-install", "--venv", str(Path(setup.sys.prefix))])
+        self.assertEqual(run.call_args.args[0][-2:], ["pip", "check"])
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("--configure-only", child.call_args.args[0])
 
 
 if __name__ == "__main__":

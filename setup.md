@@ -113,11 +113,56 @@ python3 scripts/setup_environment.py --skip-install
 ```
 
 Use `--venv venv` if reusing an existing environment named `venv` instead of `.venv`.
+`--skip-install` skips environment creation and pip installation only. It still
+runs `pip check`, installs local checkpoint pairs, configures a local GGUF, and
+performs downloads requested with `--download-models` or `--runtime`.
 The script reuses identical checkpoint files and refuses to overwrite different
 files with the same name. It preserves an existing checkpoint selection. With no
 selection, it selects the installed `twitter15_emotional_language` entry from the
 optional map, or the sole installed checkpoint. For multiple other checkpoints,
 choose one in Settings > Models.
+
+## Reset options
+
+Close Sentinel-X and its trainer before resetting. These flags perform the named
+reset immediately; there is no interactive confirmation. On Windows, substitute
+`py -3.13` for `python3` below.
+
+| Flag | Effect |
+| --- | --- |
+| `--reset-venv` | Deletes the selected `.venv` (or `--venv` path), creates a new environment using the Python running setup, reinstalls dependencies, then runs normal setup. App data is preserved. |
+| `--reset-settings` | Resets model/runtime selections, custom resource paths, generation preferences, UI/skill preferences, and startup setup preferences. Preserves downloaded files, conversations, drafts, graph data, runtime inventory, and evidence indexing records. Stops after resetting. |
+| `--factory-reset` | Deletes everything inside the selected application data directory: settings, conversations, graphs, installed checkpoints, Qwen and embeddings, FEVER archives/datasets/indexes, llama.cpp runtimes and caches. Creates empty app storage and stops. |
+
+```bash
+python3 scripts/setup_environment.py --reset-venv
+python3 scripts/setup_environment.py --reset-settings
+python3 scripts/setup_environment.py --factory-reset
+```
+
+Run `--reset-venv` using a Python **outside the environment being deleted**. If that
+environment is activated, deactivate it first. The script refuses to delete its
+own running environment or a directory without a `pyvenv.cfg` marker.
+
+To reset both the environment and app data:
+
+```bash
+python3 scripts/setup_environment.py --reset-venv --factory-reset
+```
+
+That combination rebuilds dependencies but leaves app storage empty. When ready,
+run `python3 scripts/setup_environment.py --skip-install` to reinstall the bundled
+GraphSAGE checkpoint; add download flags to download models/runtimes again.
+
+Application reset flags work without installed dependencies or a virtual
+environment. They respect `--data-dir` and the application storage environment
+variables. They cannot be combined with download flags; `--reset-venv` cannot be
+combined with `--skip-install`. Settings reset may require reselecting an installed
+runtime/model in the app. Repository files in `model weights/`, files referenced
+outside app storage, developer runtime builds in `build/`, and pip caches are
+preserved. A factory reset removes all contents of a custom `--data-dir`, so use
+a dedicated application folder. Unrecognized nonempty directories, symlink roots,
+and protected locations are rejected.
 
 Launch with `python3 run.py` (`py -3.13 run.py` on Windows). The launcher uses
 `.venv` automatically; pass `--venv venv` for a different environment. It forwards

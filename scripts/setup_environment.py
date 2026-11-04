@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import filecmp
 import json
 import math
+import os
 import pickle
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -25,6 +28,99 @@ def environment_python(directory, windows=None):
 
 def run(command):
     subprocess.run([str(part) for part in command], cwd=ROOT, check=True)
+
+
+def application_directory():
+    """Find storage without creating it or running migrations during reset preflight."""
+    override = os.environ.get("SENTINEL_X_DATA_DIR") or os.environ.get("VERITAS_DATA_DIR")
+    if override:
+        return Path(override).expanduser().absolute()
+    if sys.platform == "win32":
+        parent = Path(os.environ.get("LOCALAPPDATA", Path.home()))
+        current, legacy = parent / "Sentinel-X", parent / "Veritas"
+    elif sys.platform == "darwin":
+        parent = Path.home() / "Library/Application Support"
+        current, legacy = parent / "Sentinel-X", parent / "Veritas"
+    else:
+        parent = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+        current, legacy = parent / "sentinel-x", parent / "veritas"
+    if not current.exists() and legacy.exists():
+        return legacy
+    return current
+
+
+def validate_reset_path(path, protected=()):
+    if path.is_symlink():
+        raise ValueError(f"Refusing to reset a symlink: {path}")
+    resolved = path.resolve()
+    for keep in (ROOT, Path.home(), Path(sys.prefix), Path(sys.base_prefix), *protected):
+        if Path(keep).resolve().is_relative_to(resolved):
+            raise ValueError(f"Refusing to reset protected directory: {path}")
+    return resolved
+
+
+def validate_environment_reset(path, protected=()):
+    if Path(sys.prefix).resolve().is_relative_to(path.resolve()):
+        raise ValueError(
+            "Cannot reset the running Python environment. Deactivate it and run "
+            "setup with a system Python, or choose a different --venv."
+        )
+    validate_reset_path(path, protected)
+    if path.exists() and not (path / "pyvenv.cfg").is_file():
+        raise ValueError(f"Refusing to reset a directory without pyvenv.cfg: {path}")
+
+
+def application_database(path):
+    if not path.exists():
+        return None
+    for name in ("sentinel-x.sqlite", "veritas.sqlite"):
+        database = path / name
+        if database.is_symlink():
+            raise ValueError(f"Refusing to reset a linked database: {database}")
+        if database.is_file():
+            with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+            if {"settings", "conversations", "messages", "graphs"} <= tables:
+                return database
+    if any(path.iterdir()):
+        raise ValueError(f"Refusing to reset unrecognized application storage: {path}")
+    return None
+
+
+def reset_application(path, factory=False):
+    """Caller preflights protected paths. Never follow configured external resource paths."""
+    database = application_database(path)
+    if factory:
+        if path.exists():
+            shutil.rmtree(path)
+        # Leave a fresh database so old legacy storage cannot be migrated back on launch.
+        from sentinel_x.state import Store
+
+        Store(path)
+        print(f"Factory reset complete: {path}. Downloads, conversations and app data removed.")
+    elif database:
+        preferences = (
+            "resources",
+            "context",
+            "gpu_layers",
+            "llama_path",
+            "qwen_path",
+            "checkpoint",
+            "thinking_budget",
+            "setup_started",
+            "hide_setup_at_startup",
+        )
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.executemany("DELETE FROM settings WHERE key=?", [(k,) for k in preferences])
+            connection.execute("DELETE FROM settings WHERE key LIKE 'ui:%' OR key LIKE 'skill:%'")
+        print(f"Preferences reset: {path}. Conversations, drafts and downloads preserved.")
+    else:
+        print(f"No saved preferences to reset: {path}")
 
 
 def validate_checkpoint(path):
@@ -188,7 +284,25 @@ def main(argv=None):
     parser.add_argument("--data-dir", type=Path, help="Override application storage for this run")
     parser.add_argument("--dev", action="store_true", help="Include testing and packaging tools")
     parser.add_argument(
-        "--skip-install", action="store_true", help="Reuse an installed environment"
+        "--skip-install",
+        action="store_true",
+        help="Skip dependency installation; still check dependencies and configure resources",
+    )
+    parser.add_argument(
+        "--reset-venv",
+        action="store_true",
+        help="Delete and recreate --venv, then reinstall dependencies",
+    )
+    resets = parser.add_mutually_exclusive_group()
+    resets.add_argument(
+        "--reset-settings",
+        action="store_true",
+        help="Reset app preferences only; preserve downloads and conversations",
+    )
+    resets.add_argument(
+        "--factory-reset",
+        action="store_true",
+        help="Delete all app storage, including models, FEVER, runtime and chats",
     )
     parser.add_argument(
         "--download-models", action="store_true", help="Download Qwen and embeddings"
@@ -205,9 +319,27 @@ def main(argv=None):
     args.venv = args.venv.expanduser().absolute()
     args.weights_dir = args.weights_dir.expanduser().resolve()
     if args.data_dir:
-        args.data_dir = args.data_dir.expanduser().resolve()
-    if not args.weights_dir.is_dir():
+        args.data_dir = args.data_dir.expanduser().absolute()
+    resetting_app = args.reset_settings or args.factory_reset
+    if args.reset_venv and args.skip_install:
+        parser.error("--reset-venv cannot be combined with --skip-install")
+    if resetting_app and (args.download_models or args.runtime or args.configure_only):
+        parser.error("Application resets cannot be combined with downloads or --configure-only")
+    if not resetting_app and not args.weights_dir.is_dir():
         parser.error(f"Weights directory does not exist: {args.weights_dir}")
+    reset_root = args.data_dir or application_directory()
+    # Validate every deletion target before making any changes.
+    if args.reset_venv:
+        validate_environment_reset(args.venv, (args.weights_dir, reset_root))
+    if resetting_app:
+        reset_root = validate_reset_path(reset_root, (args.weights_dir, args.venv))
+        application_database(reset_root)
+        reset_application(reset_root, factory=args.factory_reset)
+        if not args.reset_venv:
+            return 0
+    if args.reset_venv and args.venv.exists():
+        print(f"Removing Python environment: {args.venv}", flush=True)
+        shutil.rmtree(args.venv)
     if args.configure_only:
         return configure(args)
     python = environment_python(args.venv)
@@ -227,6 +359,9 @@ def main(argv=None):
         requirements = "requirements-dev.txt" if args.dev else "requirements.txt"
         run([python, "-m", "pip", "install", "-r", ROOT / requirements])
     run([python, "-m", "pip", "check"])
+    if resetting_app:
+        print("Python environment rebuilt. Run setup --skip-install to install local checkpoints.")
+        return 0
     command = [
         python,
         Path(__file__).resolve(),
@@ -252,6 +387,13 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, ValueError, RuntimeError, ImportError, subprocess.CalledProcessError) as exc:
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        ImportError,
+        sqlite3.Error,
+        subprocess.CalledProcessError,
+    ) as exc:
         print(f"Setup failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
