@@ -245,11 +245,14 @@ class EnvironmentSetupTests(unittest.TestCase):
         self.assertEqual(self.store.setting("context"), 16384)
 
     def test_skip_install_still_checks_and_configures(self):
+        environment = self.root / "test-venv"
+        setup.venv.EnvBuilder(with_pip=False).create(environment)
         with (
             patch.object(setup, "run") as run,
             patch.object(setup.subprocess, "run", return_value=Mock(returncode=0)) as child,
+            patch.object(setup.sys, "prefix", setup.sys.base_prefix),
         ):
-            setup.main(["--skip-install", "--venv", str(Path(setup.sys.prefix))])
+            setup.main(["--skip-install", "--venv", str(environment)])
         self.assertEqual(run.call_args.args[0][-2:], ["pip", "check"])
         self.assertEqual(run.call_count, 1)
         self.assertIn("--configure-only", child.call_args.args[0])
