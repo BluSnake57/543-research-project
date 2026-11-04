@@ -1,5 +1,9 @@
 node_modules/
 .venv/
+venv/
+.venv*/
+/model weights/*
+!/model weights/README.md
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -39,3 +43,7 @@ resources/*
 *.pth
 *.sqlite*
 *.bundle
+
+# Version small GraphSAGE checkpoints and their metadata in the distribution folder.
+!/model weights/*.pt
+!/model weights/*.json

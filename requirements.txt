@@ -1,6 +1,7 @@
-# Install prebuilt dependency wheels; never compile a native dependency from source.
+# Prefer prebuilt wheels, allowing PyYAML source builds for Python 3.15.
 --only-binary=:all:
-numpy>=2.1,<3
+--no-binary=pyyaml
+numpy>=2.1
 PySide6-Essentials>=6.8,<7
 torch>=2.6,<3
 sentence-transformers>=3.4,<6

@@ -1,5 +1,15 @@
 # Sentinel-X
 
+**Quick start:** run `python scripts/setup_environment.py`, then `python run.py`
+(use `python3` on Linux/macOS or `py -3.13` on Windows).
+See [setup.md](setup.md) for prerequisites, model downloads, and checkpoint setup.
+
+Project layout: application code is in `src/backend/sentinel_x/`, automation in
+`scripts/`, tests in `tests/`, and supporting documentation in `docs/`. Versioned
+GraphSAGE checkpoints belong in `model weights/`; feature tables and experiment
+summaries belong in `results/`. The `.venv/` environment and downloaded models are
+local setup artifacts.
+
 **Sentinel-X** is a local AI research application for studying two different questions about social-media content:
 
 1. **Is there evidence supporting the claims being made?**
@@ -434,6 +444,10 @@ This separation is an important part of the project's information-assurance desi
 ---
 
 # Installation
+
+See [setup.md](setup.md) for the cross-platform Python setup script, local model
+checkpoint installation, and Windows, macOS, and Linux launch instructions.
+Local model pairs go in [`model weights/`](model%20weights/README.md).
 
 ## Requirements
 
