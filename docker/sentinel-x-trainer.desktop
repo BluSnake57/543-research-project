@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Sentinel-X Trainer
+Exec=/usr/local/bin/python -m sentinel_x.cli trainer
+Icon=applications-science
+Terminal=false
+Categories=Education;Science;

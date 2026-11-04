@@ -2,6 +2,10 @@
 
 **Quick start:** run `python scripts/setup_environment.py`, then `python run.py`
 (use `python3` on Linux/macOS or `py -3.13` on Windows).
+
+**Docker desktop:** [Run in a browser with noVNC and NVIDIA CUDA](docs/container.md).
+The container includes a password-protected desktop, conversation downloads,
+configurable resource limits, persistent storage, and host isolation controls.
 See [setup.md](setup.md) for prerequisites, model downloads, and checkpoint setup.
 
 Project layout: application code is in `src/backend/sentinel_x/`, automation in

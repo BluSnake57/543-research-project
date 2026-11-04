@@ -1,0 +1,4 @@
+# Explicitly opt into outbound network access for model/runtime downloads.
+networks:
+  desktop:
+    internal: false
