@@ -161,9 +161,25 @@ class GitRecoveryTests(unittest.TestCase):
                    'settings.json', 'models/qwen/model.gguf', 'datasets/fever/train.jsonl',
                    'resources/fever/wiki-pages.zip', 'checkpoints/weights.pt', 'index/evidence.sqlite-wal',
                    'runtime/llama-server', 'graphs/import.json', 'skills/local/SKILL.md',
-                   'sentinel-x/sentinel-x.sqlite', 'veritas/veritas.sqlite', 'weights.safetensors']
+                   'sentinel-x/sentinel-x.sqlite', 'veritas/veritas.sqlite', 'weights.safetensors',
+                   '.ruff_cache/0.17/cache', '.mypy_cache/cache.json', '.tox/py/bin/python',
+                   '.nox/tests/session', '.ipynb_checkpoints/notebook.ipynb', '.coverage',
+                   '.coverage.host.123', 'coverage.xml', 'htmlcov/index.html',
+                   'build/runtime-manifest.json', 'dist/Sentinel-X/Sentinel-X',
+                   '.venv/lib/module.py', 'src/backend/__pycache__/module.pyo',
+                   'scope-worker.log', 'layer16.sae.pt.part', 'download.checksum.json',
+                   'wiki.jsonl.extracting', '.DS_Store', 'docs/Thumbs.db',
+                   '.ssh/id_ed25519', '.huggingface/token', 'secrets/local.json', '.netrc',
+                   'model weights/layer16.sae.pt', 'model weights/local-checkpoint.pt',
+                   'model weights/config.json', 'model weights/checkpoint_map.json',
+                   'models/qwen_2b/config.json', 'models/scope_2b/layer16.sae.pt']
         kept = ['.env.example', 'resources/.gitkeep', 'src/backend/sentinel_x/config.py',
                 'src/backend/sentinel_x/assets/runtime-manifest.json',
-                'src/backend/sentinel_x/assets/skills/graphsage/SKILL.md', 'tests/test_core.py']
+                'src/backend/sentinel_x/assets/skills/graphsage/SKILL.md', 'tests/test_core.py',
+                'model weights/README.md',
+                'model weights/fe44637dfc4d49fe9cd402c4ce6cc21d.pt',
+                'model weights/fe44637dfc4d49fe9cd402c4ce6cc21d.json',
+                'results/twitter15_llm_features.json', 'results/final/experiment_results.csv',
+                'docs/screenshots/scope-readable.png', '.github/workflows/package.yml']
         found = self.command(self.source, 'check-ignore', '--stdin', input='\n'.join(ignored+kept)+'\n').splitlines()
         self.assertEqual(set(found), set(ignored))

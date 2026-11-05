@@ -28,7 +28,10 @@ Qwen model and its matching Scope SAE from Models or the setup command.
 Other files, including `twitter15_llm_features.json`, are not automatically imported.
 Feature tables are inputs to training/evaluation, not model checkpoints.
 
-Small GraphSAGE `.pt` files and their `.json` metadata in this directory are included
-in Git. Large Qwen GGUF and other downloaded artifacts remain ignored. Keep feature
+Only the shipped GraphSAGE pair named above is allowlisted in Git. Additional
+local checkpoint pairs, configuration files and Scope weights remain ignored.
+To distribute another reviewed GraphSAGE pair, explicitly add its two filenames
+to `.gitignore`; do not allowlist all `.pt` or `.json` files. Large Qwen GGUF and
+other downloaded artifacts remain ignored. Keep feature
 tables in `results/` and experiment summaries in `results/final/`.
 See [setup.md](../setup.md). Launch with `python run.py` after setup.

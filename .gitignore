@@ -5,8 +5,17 @@ venv/
 /model weights/*
 !/model weights/README.md
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.ipynb_checkpoints/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 dist/
 out/
 build/
@@ -17,6 +26,10 @@ build/
 /.codex/
 /.agents/
 /.aws/
+/.ssh/
+/.huggingface/
+/secrets/
+/.netrc
 /.idea/
 /.vscode/
 /.data/
@@ -43,7 +56,14 @@ resources/*
 *.pth
 *.sqlite*
 *.bundle
+*.log
+*.part
+*.checksum.json
+*.extracting
+.DS_Store
+Thumbs.db
 
-# Version small GraphSAGE checkpoints and their metadata in the distribution folder.
-!/model weights/*.pt
-!/model weights/*.json
+# Only the reviewed, shipped GraphSAGE pair belongs in version control.
+# Additional local checkpoint pairs (including Scope .pt weights) stay ignored.
+!/model weights/fe44637dfc4d49fe9cd402c4ce6cc21d.pt
+!/model weights/fe44637dfc4d49fe9cd402c4ce6cc21d.json
