@@ -1,0 +1,77 @@
+[
+  {
+    "case": "case-01",
+    "focus": "Early spread assessment",
+    "source_id": "643103859729166337"
+  },
+  {
+    "case": "case-02",
+    "focus": "Claim and evidence review",
+    "source_id": "614790312955904000"
+  },
+  {
+    "case": "case-03",
+    "focus": "Fast growth without truth assumptions",
+    "source_id": "715256242990505984"
+  },
+  {
+    "case": "case-04",
+    "focus": "Limited spread without dismissal",
+    "source_id": "767861179951648768"
+  },
+  {
+    "case": "case-05",
+    "focus": "Emotional framing",
+    "source_id": "672432930426372096"
+  },
+  {
+    "case": "case-06",
+    "focus": "Evidence insufficient to decide",
+    "source_id": "552806757672964097"
+  },
+  {
+    "case": "case-07",
+    "focus": "Research briefing",
+    "source_id": "731093044460683264"
+  },
+  {
+    "case": "case-08",
+    "focus": "Numerical interpretation",
+    "source_id": "688428083540553728"
+  },
+  {
+    "case": "case-09",
+    "focus": "Rumor framing and uncertainty",
+    "source_id": "669259395902152704"
+  },
+  {
+    "case": "case-10",
+    "focus": "Grounded explanation",
+    "source_id": "544517264054423552"
+  },
+  {
+    "case": "case-11",
+    "focus": "Scope interpretation",
+    "source_id": "728627623488786433"
+  },
+  {
+    "case": "case-12",
+    "focus": "Claim decomposition",
+    "source_id": "692833140428017664"
+  },
+  {
+    "case": "case-13",
+    "focus": "Decision support",
+    "source_id": "613114185505996802"
+  },
+  {
+    "case": "case-14",
+    "focus": "Conflicting or irrelevant evidence",
+    "source_id": "544282227035869184"
+  },
+  {
+    "case": "case-15",
+    "focus": "Plain-language final assessment",
+    "source_id": "724939017410727938"
+  }
+]

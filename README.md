@@ -638,3 +638,11 @@ The final result is a working local research application that connects:
 - Deterministic virality output: complete
 - Final results package: complete
 
+
+## Twitter16 validation suite
+
+Fifteen user-workflow model evaluations are prepared under
+`datasets/twitter16-model-cases/`, with source posts, user requests, hidden outcomes,
+and reviewer scorecards. See [model evaluation and pass/fail guidelines](docs/TWITTER16_VALIDATION.md)
+for Qwen analysis, GraphSAGE prediction, and end-to-end assessment. The full
+Twitter16 corpus remains available in `datasets/twitter16-suite/` for aggregate scoring.
