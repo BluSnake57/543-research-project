@@ -1,0 +1,23 @@
+**
+# Allow files explicitly. Allowing a parent directory would include its local contents.
+!Dockerfile
+!pyproject.toml
+!requirements.txt
+!README.md
+!src/backend/sentinel_x/*.py
+!src/backend/sentinel_x/assets/runtime-manifest.json
+!src/backend/sentinel_x/assets/skills/graphsage/SKILL.md
+!src/backend/sentinel_x/assets/skills/graphsage/tools.json
+!scripts/setup_environment.py
+!model weights/fe44637dfc4d49fe9cd402c4ce6cc21d.pt
+!model weights/fe44637dfc4d49fe9cd402c4ce6cc21d.json
+!results/final/checkpoint_map.json
+!docker/*.py
+!docker/*.sh
+!docker/*.desktop
+!docker/index.html
+!docker/nginx.conf
+!docker/supervisord.conf
+!docker/requirements.lock
+**/__pycache__/
+**/*.pyc

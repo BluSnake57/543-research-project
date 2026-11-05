@@ -1,0 +1,12 @@
+# Optional CPU-only build/run, also used by CI runners without NVIDIA devices.
+# Compose 2.24.4+ supports !reset.
+services:
+  desktop:
+    image: sentinel-x-desktop:local-cpu
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []

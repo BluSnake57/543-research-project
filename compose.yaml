@@ -1,0 +1,57 @@
+services:
+  desktop:
+    build:
+      context: .
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
+    image: sentinel-x-desktop:local-cuda
+    pull_policy: never
+    ports:
+      - "127.0.0.1:${NOVNC_PORT:-6080}:6080"
+    environment:
+      DESKTOP_SIZE: "${DESKTOP_SIZE:-1600x900}"
+      OMP_NUM_THREADS: "${COMPUTE_THREADS:-4}"
+      MKL_NUM_THREADS: "${COMPUTE_THREADS:-4}"
+      OPENBLAS_NUM_THREADS: "${COMPUTE_THREADS:-4}"
+    volumes:
+      - desktop-home:/home/sentinel
+      - ./.secrets/vnc_password:/run/secrets/vnc_password:ro,Z
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${CONTAINER_TMP_SIZE:-1g},mode=1777
+      - /run:rw,noexec,nosuid,nodev,size=16m,mode=755
+    shm_size: "${CONTAINER_SHM_SIZE:-1gb}"
+    pids_limit: ${CONTAINER_PIDS:-512}
+    mem_limit: "${CONTAINER_MEMORY:-16g}"
+    cpus: "${CONTAINER_CPUS:-8}"
+    ulimits:
+      core: 0
+      nofile:
+        soft: 4096
+        hard: 8192
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks: [desktop]
+    restart: unless-stopped
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  desktop-home:
+
+networks:
+  desktop:
+    internal: true

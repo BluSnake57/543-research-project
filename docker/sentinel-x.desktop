@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Sentinel-X
+Comment=Evidence analysis and virality prediction
+Exec=/usr/local/bin/python -m sentinel_x.cli gui
+Path=/home/sentinel/Exports
+Icon=applications-science
+Terminal=false
+Categories=Education;Science;

@@ -1,0 +1,61 @@
+name: Container desktop
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [cpu, cuda]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create local desktop password
+        run: python3 scripts/create_container_secret.py
+      - name: Validate local image and network configurations
+        run: python3 scripts/check_container_config.py
+      - name: Select build and disable GPU reservation on this CPU runner
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          if [ "$VARIANT" = cpu ]; then
+            echo "COMPOSE_FILE=compose.yaml:compose.cpu.yaml" >> "$GITHUB_ENV"
+          else
+            cat > "$RUNNER_TEMP/compose.no-gpu.yaml" <<'EOF'
+          services:
+            desktop:
+              deploy:
+                resources:
+                  reservations:
+                    devices: !reset []
+          EOF
+            echo "COMPOSE_FILE=compose.yaml:$RUNNER_TEMP/compose.no-gpu.yaml" >> "$GITHUB_ENV"
+          fi
+      - name: Build local image
+        run: docker compose build
+      - name: Launch desktop without pulling or rebuilding
+        run: docker compose up --no-build --wait --wait-timeout 180 -d
+      - name: Check dependencies, imports, quantization, and worker cleanup
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          docker compose exec -T desktop python -m pip check
+          docker compose exec -T desktop python /opt/container/check_runtime.py --variant "$VARIANT"
+      - name: Check desktop, downloads, and protections
+        run: docker compose exec -T desktop python /opt/container/smoke_test.py
+      - name: Confirm settings, model storage, and exports survive recreation
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          docker compose exec -T desktop python /opt/container/check_persistence.py seed --device "$VARIANT"
+          docker compose up --no-build --force-recreate --wait --wait-timeout 180 -d
+          docker compose exec -T desktop python /opt/container/check_persistence.py check --device "$VARIANT"
+          docker compose exec -T desktop python /opt/container/smoke_test.py
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color
+      - name: Stop disposable test containers
+        if: always()
+        run: docker compose down --volumes

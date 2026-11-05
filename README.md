@@ -7,6 +7,12 @@ full-model execution are not yet validated; release packaging remains unfinished
 
 **Quick start:** run `python run.py setup`, then `python run.py`
 (use `python3` on Linux/macOS or `py -3.13` on Windows).
+
+**Docker desktop:** [Build locally for CPU or NVIDIA CUDA](docs/container.md).
+Separate local images include a password-protected browser desktop, authenticated
+conversation downloads, and persistent Scope settings/model storage. Downloads
+require opt-in networking; no application images are published or pulled.
+Container builds and real-model memory fit still require Docker-host validation.
 See [setup.md](setup.md) for prerequisites, model downloads, and checkpoint setup.
 
 Project layout: application code is in `src/backend/sentinel_x/`, automation in
