@@ -10,9 +10,13 @@ from .runtime_ui import RuntimePanel
 
 def download_options(service):
     status = service.status()
-    qwen = bool(status['qwen_path'] and Path(status['qwen_path']).is_file())
+    qwen = status['models']['qwen']['ready']
     return [
         {'key': 'qwen', 'name': 'Chat · Qwen3.5-9B (large download)', 'required': True, 'ready': qwen},
+        {'key': 'scope', 'name': 'Explanation · Qwen-Scope layer 16', 'required': True,
+         'ready': status['models']['scope']['ready']},
+        {'key': 'qwen_2b', 'name': 'Optional 2B fallback · Qwen3.5-2B', 'required': False, 'ready': status['models']['qwen_2b']['ready']},
+        {'key': 'scope_2b', 'name': '2B explanation · matching Scope SAE', 'required': False, 'ready': status['models']['scope_2b']['ready']},
         {'key': 'embedding', 'name': 'Semantic search · BGE-small', 'required': True,
          'ready': status['models']['embedding']['ready']},
         {'key': 'fever', 'name': 'Optional evidence · FEVER Wikipedia (download only; index later)',
@@ -23,7 +27,8 @@ def download_options(service):
 def needs_prompt(service):
     if service.store.setting('hide_setup_at_startup', False):
         return False
-    return any(not option['ready'] for option in download_options(service))
+    return any(not option['ready'] for option in download_options(service)
+               if option['required'] or option['key'] == 'fever')
 
 
 class SetupDialog(QDialog):
@@ -37,11 +42,6 @@ class SetupDialog(QDialog):
         outer.addWidget(scroll, 1)
         title = QLabel('<h2>Get Sentinel-X ready</h2><p>Choose what to download. You can skip for now and return later.</p>')
         title.setWordWrap(True); layout.addWidget(title)
-        executable, _ = service.runtime.configured()
-        ready = bool(executable and Path(executable).is_file())
-        runtime = QLabel('Included engine is ready. GPU engines can be downloaded below.' if ready else
-                        'No engine is available. Download a compatible engine below.')
-        runtime.setWordWrap(True); layout.addWidget(runtime)
         self.runtime_panel = RuntimePanel(service, self); layout.addWidget(self.runtime_panel)
         self.choices = {}
         for option in download_options(service):
@@ -77,7 +77,7 @@ class SetupDialog(QDialog):
         super().closeEvent(event)
 
     def start(self):
-        keys = [key for key in ('qwen', 'embedding') if self.choices[key].isChecked()]
+        keys = [key for key in ('qwen', 'scope', 'qwen_2b', 'scope_2b', 'embedding') if self.choices[key].isChecked()]
         fever = self.choices['fever'].isChecked()
         if not keys and not fever:
             self.message.setText('Select at least one download, or continue into the app.'); return

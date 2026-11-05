@@ -112,6 +112,9 @@ def reset_application(path, factory=False):
             "qwen_path",
             "checkpoint",
             "thinking_budget",
+            "scope_device",
+            "scope_model",
+            "scope_offload",
             "setup_started",
             "hide_setup_at_startup",
         )
@@ -254,20 +257,21 @@ def configure(args):
     models = Models(store, manifest())
     print(f"Application data: {store.root}", flush=True)
     installed, problems = install_checkpoints(args.weights_dir, store)
-    local_qwen = args.weights_dir / "Qwen3.5-9B-Q4_K_M.gguf"
-    if local_qwen.is_file():
-        models.import_qwen(local_qwen)
-        print(f"Using local Qwen: {local_qwen} (keep this file in place)")
-    if args.runtime:
-        from sentinel_x.runtime_packages import runtime_choices
+    if args.model:
+        store.configure("scope_model", args.model)
+    if args.cpu_offload:
+        store.configure("scope_offload", args.cpu_offload)
+    if args.device:
+        store.configure("scope_device", args.device)
+    if args.download_models or args.download_both:
+        from sentinel_x.config import model_profile, MODEL_KEYS
 
-        if args.runtime not in runtime_choices():
-            raise ValueError(f"{args.runtime} runtime is unavailable on this platform; try cpu")
-        models.install_runtime(Progress(), backend=args.runtime)
-    if args.download_models:
-        for key in ("qwen", "embedding"):
-            if key == "qwen" and store.setting("qwen_path"):
-                continue
+        keys = (
+            MODEL_KEYS
+            if args.download_both
+            else (*model_profile(store.setting("scope_model", "9b"))["keys"], "embedding")
+        )
+        for key in keys:
             models.install(key, Progress())
     for problem in problems:
         print(f"CHECKPOINT INCOMPLETE: {problem}", file=sys.stderr)
@@ -305,12 +309,27 @@ def main(argv=None):
         help="Delete all app storage, including models, FEVER, runtime and chats",
     )
     parser.add_argument(
-        "--download-models", action="store_true", help="Download Qwen and embeddings"
+        "--download-models",
+        action="store_true",
+        help="Download Qwen, Scope layer 16, and embeddings",
     )
     parser.add_argument(
-        "--runtime",
-        choices=("cpu", "cuda", "vulkan", "rocm"),
-        help="Download and configure a llama.cpp runtime (cpu includes Apple Metal)",
+        "--device",
+        choices=("cpu", "cuda"),
+        help="Scope device; CPU is an explicit, slower fallback requiring more memory",
+    )
+    parser.add_argument(
+        "--model", choices=("9b", "2b"), help="Select a model; omitted preserves the current choice"
+    )
+    parser.add_argument(
+        "--cpu-offload",
+        choices=("none", "sae", "modules"),
+        help="CUDA CPU-offload policy; omitted preserves the current choice",
+    )
+    parser.add_argument(
+        "--download-both",
+        action="store_true",
+        help="Download both model/SAE pairs and embeddings without changing selection",
     )
     parser.add_argument("--configure-only", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -323,7 +342,14 @@ def main(argv=None):
     resetting_app = args.reset_settings or args.factory_reset
     if args.reset_venv and args.skip_install:
         parser.error("--reset-venv cannot be combined with --skip-install")
-    if resetting_app and (args.download_models or args.runtime or args.configure_only):
+    if resetting_app and (
+        args.download_models
+        or args.download_both
+        or args.device
+        or args.model
+        or args.cpu_offload
+        or args.configure_only
+    ):
         parser.error("Application resets cannot be combined with downloads or --configure-only")
     if not resetting_app and not args.weights_dir.is_dir():
         parser.error(f"Weights directory does not exist: {args.weights_dir}")
@@ -369,10 +395,16 @@ def main(argv=None):
         "--weights-dir",
         args.weights_dir,
     ]
+    if args.model:
+        command += ["--model", args.model]
+    if args.cpu_offload:
+        command += ["--cpu-offload", args.cpu_offload]
+    if args.download_both:
+        command += ["--download-both"]
     if args.data_dir:
         command += ["--data-dir", args.data_dir]
-    if args.runtime:
-        command += ["--runtime", args.runtime]
+    if args.device:
+        command += ["--device", args.device]
     if args.download_models:
         command += ["--download-models"]
     result = subprocess.run([str(part) for part in command], cwd=ROOT)

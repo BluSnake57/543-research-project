@@ -17,9 +17,12 @@ FEATURES = (
 
 
 class SimpleJob:
-    """Minimal job interface required by Llama.structured()."""
+    """Minimal job interface required by ScopeRuntime.structured()."""
 
     thinking_enabled = False
+
+    def __init__(self):
+        self.data = {}
 
     def emit(self, *args, **kwargs):
         pass
@@ -215,6 +218,7 @@ def main():
 
             for attempt in range(args.retries + 1):
                 try:
+                    job = SimpleJob()
                     raw = service.runtime.structured(
                         prompt,
                         job,
@@ -225,6 +229,7 @@ def main():
                     results[tweet_id] = {
                         "text": text,
                         "features": features,
+                        "scope": job.data.get("scope", []),
                     }
 
                     save_results(

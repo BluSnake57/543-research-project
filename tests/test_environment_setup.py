@@ -258,5 +258,78 @@ class EnvironmentSetupTests(unittest.TestCase):
         self.assertIn("--configure-only", child.call_args.args[0])
 
 
+class ScopeSetupOptionsTests(unittest.TestCase):
+    def test_rerun_preserves_selections_and_download_both_does_not_activate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights"
+            source.mkdir()
+            store = Store(root / "data")
+            store.configure("scope_model", "2b")
+            store.configure("scope_offload", "modules")
+            args = ["--configure-only", "--data-dir", str(store.root), "--weights-dir", str(source)]
+            with patch("sentinel_x.downloads.Models.install") as install:
+                self.assertEqual(setup.main(args), 0)
+                install.assert_not_called()
+                self.assertEqual(setup.main([*args, "--download-both"]), 0)
+                self.assertEqual(
+                    [call.args[0] for call in install.call_args_list],
+                    ["qwen", "scope", "qwen_2b", "scope_2b", "embedding"],
+                )
+            self.assertEqual(store.setting("scope_model"), "2b")
+            self.assertEqual(store.setting("scope_offload"), "modules")
+            with patch("sentinel_x.downloads.Models.install") as install:
+                self.assertEqual(
+                    setup.main(
+                        [*args, "--model", "9b", "--cpu-offload", "sae", "--download-models"]
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    [call.args[0] for call in install.call_args_list],
+                    ["qwen", "scope", "embedding"],
+                )
+            self.assertEqual(store.setting("scope_model"), "9b")
+            self.assertEqual(store.setting("scope_offload"), "sae")
+
+    def test_model_flags_conflict_with_resets(self):
+        for extra in (["--model", "2b"], ["--cpu-offload", "sae"], ["--download-both"]):
+            with self.assertRaises(SystemExit):
+                setup.main(["--reset-settings", *extra])
+
+    def test_launcher_setup_without_existing_environment(self):
+        import run as launcher
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(launcher.subprocess, "call", return_value=0) as call,
+        ):
+            environment = Path(directory) / "new-environment"
+            self.assertEqual(
+                launcher.main(
+                    ["setup", "--venv", str(environment), "--model", "2b", "--download-both"]
+                ),
+                0,
+            )
+            command = call.call_args.args[0]
+            self.assertEqual(command[0], launcher.sys.executable)
+            self.assertTrue(command[1].endswith("scripts/setup_environment.py"))
+            self.assertEqual(
+                command[2:], ["--venv", str(environment), "--model", "2b", "--download-both"]
+            )
+
+    def test_launcher_passes_application_arguments_and_exit_code(self):
+        import run as launcher
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = Path(directory)
+            setup.venv.EnvBuilder(with_pip=False).create(environment)
+            with patch.object(launcher.subprocess, "call", return_value=7) as call:
+                self.assertEqual(
+                    launcher.main(["--venv", directory, "--data-dir", "data", "trainer"]), 7
+                )
+                self.assertEqual(call.call_args.args[0][-3:], ["--data-dir", "data", "trainer"])
+
+
 if __name__ == "__main__":
     unittest.main()

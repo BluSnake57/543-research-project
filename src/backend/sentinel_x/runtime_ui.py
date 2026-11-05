@@ -1,102 +1,87 @@
-"""Optional runtime downloads and activation, shared by setup and Models."""
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget,
-)
+"""Device preferences and Scope model verification, shared by setup and Models."""
 
-from .activity_ui import job_summary
-from .runtime_packages import LABELS, HELP, runtime_choices
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
 
 class RuntimePanel(QWidget):
     def __init__(self, service, parent=None):
         super().__init__(parent)
-        self.service = service; self.job_id = None; self.busy = False
-        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0)
-        title = QLabel('llama.cpp engines · optional GPU downloads'); layout.addWidget(title)
-        self.choice = QComboBox(); self.choice.setAccessibleName('Runtime download backend')
-        for backend in runtime_choices():
-            self.choice.addItem(LABELS[backend], backend)
+        self.service = service
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel("Qwen3.5 + matching Qwen-Scope · required for every model response")
+        )
+        from .config import MODEL_PROFILES
+
+        self.model = QComboBox()
+        self.model.setAccessibleName("Scope model size")
+        for key, profile in MODEL_PROFILES.items():
+            self.model.addItem(profile["label"] + " + Scope", key)
+        self.model.setCurrentIndex(self.model.findData(service.store.setting("scope_model", "9b")))
+        self.model.currentIndexChanged.connect(self.select)
+        layout.addWidget(self.model)
+        for key, profile in MODEL_PROFILES.items():
+            download = QPushButton("Download " + profile["label"] + " + matching Scope SAE")
+            download.clicked.connect(lambda checked=False, name=key: service.download_pair(name))
+            layout.addWidget(download)
+        self.offload = QComboBox()
+        self.offload.setAccessibleName("CPU offloading")
+        self.offload.addItem("No CPU offloading", "none")
+        self.offload.addItem("Keep Scope SAE on CPU", "sae")
+        self.offload.addItem("Keep Scope, embeddings, output head and vision on CPU", "modules")
+        self.offload.setCurrentIndex(
+            self.offload.findData(service.store.setting("scope_offload", "none"))
+        )
+        self.offload.currentIndexChanged.connect(self.select)
+        layout.addWidget(self.offload)
+        self.choice = QComboBox()
+        self.choice.setAccessibleName("Scope device")
+        self.choice.addItem("CUDA · 4-bit NF4", "cuda")
+        self.choice.addItem("CPU · 4-bit NF4, slower", "cpu")
+        self.choice.setCurrentIndex(
+            self.choice.findData(service.store.setting("scope_device", "cuda"))
+        )
+        self.choice.currentIndexChanged.connect(self.select)
         layout.addWidget(self.choice)
-        self.description = QLabel(); self.description.setWordWrap(True); layout.addWidget(self.description)
-        self.inventory = QLabel(); self.inventory.setWordWrap(True)
-        self.inventory.setTextFormat(Qt.TextFormat.PlainText); layout.addWidget(self.inventory)
-        self.use_after = QCheckBox('Use after download (waits for the current response)')
-        self.use_after.setChecked(True); layout.addWidget(self.use_after)
-        row = QHBoxLayout()
-        self.download = QPushButton('Download engine'); self.download.clicked.connect(self.start_download)
-        self.activate = QPushButton('Use installed engine'); self.activate.clicked.connect(self.use_installed)
-        self.bundled = QPushButton('Use included engine'); self.bundled.clicked.connect(self.use_bundled)
-        for button in (self.download, self.activate, self.bundled): row.addWidget(button)
-        layout.addLayout(row)
-        self.progress = QProgressBar(); self.progress.setRange(0, 100); self.progress.hide(); layout.addWidget(self.progress)
-        self.message = QLabel('Downloads start only when you choose Download engine.')
-        self.message.setTextFormat(Qt.TextFormat.PlainText); self.message.setWordWrap(True); layout.addWidget(self.message)
-        self.choice.currentIndexChanged.connect(self.refresh)
-        self.timer = QTimer(self); self.timer.setInterval(500); self.timer.timeout.connect(self.poll); self.timer.start()
+        self.inventory = QLabel()
+        self.inventory.setWordWrap(True)
+        layout.addWidget(self.inventory)
+        button = QPushButton("Verify Qwen and Scope files")
+        button.clicked.connect(lambda: service.verify_scope())
+        layout.addWidget(button)
+        note = QLabel(
+            "Old llama.cpp engines and GGUF files are unused on this branch. "
+            "They are preserved until you explicitly remove them or factory reset."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        self.timer = QTimer(self)
+        self.timer.setInterval(2000)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start()
+        self.refresh()
+
+    def select(self):
+        self.service.configure(
+            scope_device=self.choice.currentData(),
+            scope_model=self.model.currentData(),
+            scope_offload=self.offload.currentData(),
+        )
         self.refresh()
 
     def refresh(self):
-        backend = self.choice.currentData()
-        self.description.setText(HELP.get(backend, 'No downloadable runtime is available for this platform.'))
-        entries = self.service.store.setting('installed_runtimes', {})
-        entry = entries.get(backend)
-        selected, _ = self.service.runtime.configured()
-        active_name = next((LABELS[k] for k, value in entries.items() if value['executable'] == selected),
-                           'Included or locally selected engine')
-        self.inventory.setText('Selected: '+active_name+'\n'+
-            ('This download: installed · '+entry['release'] if entry else 'This download: not installed'))
-        if self.service.runtime.active:
-            active = self.service.runtime.active
-            self.inventory.setText(self.inventory.text()+'\nRunning: '+
-                ('CPU' if active['gpu_layers'] == '0' else 'automatic GPU offload requested'))
-        self.choice.setEnabled(not self.busy); self.use_after.setEnabled(not self.busy)
-        self.download.setEnabled(not self.busy and backend is not None)
-        self.activate.setEnabled(not self.busy and entry is not None)
-        self.bundled.setEnabled(not self.busy)
+        import psutil
 
-    def begin(self, callback):
-        try:
-            self.job_id = callback()
-            self.busy = True; self.progress.setRange(0, 0); self.progress.show()
-            self.message.setText('Queued. Follow progress here or in Background work.')
-        except Exception as exc:
-            self.message.setText(str(exc))
-        self.refresh()
+        from .config import model_profile
 
-    def start_download(self):
-        self.begin(lambda: self.service.download_runtime(self.choice.currentData(), self.use_after.isChecked()))
-
-    def use_installed(self):
-        self.begin(lambda: self.service.activate_runtime(self.choice.currentData()))
-
-    def use_bundled(self):
-        self.begin(lambda: self.service.activate_runtime('bundled'))
-
-    def poll(self):
-        if getattr(self.window(), 'closed', False):
-            self.timer.stop(); return
-        try:
-            if not self.job_id:
-                return
-            job = self.service.jobs.get(self.job_id); summary = job_summary(job)
-            self.message.setText(summary['detail'])
-            if summary['percent'] is None:
-                self.progress.setRange(0, 0)
-            else:
-                self.progress.setRange(0, 100); self.progress.setValue(summary['percent'])
-            if job['status'] not in ('completed', 'failed', 'cancelled', 'interrupted'):
-                return
-            result = job.get('result', {})
-            if job['status'] == 'completed' and result.get('activation_job'):
-                self.job_id = result['activation_job']
-                self.message.setText('Engine installed. Waiting to activate after current model work.')
-                return
-            self.job_id = None; self.busy = False
-            if job['status'] == 'completed':
-                devices = result.get('devices', [])
-                self.message.setText(('Engine selected.' if result.get('activated') else 'Engine installed.')+
-                                     ('\nDetected: '+'; '.join(devices) if devices else ''))
-            self.refresh()
-        except Exception as exc:
-            self.message.setText(str(exc))
+        ready = self.service.models.status()
+        self.offload.setEnabled(self.choice.currentData() == "cuda")
+        self.inventory.setText(
+            f"Available RAM: {psutil.virtual_memory().available / 1024**3:.1f} GiB. "
+            "CUDA availability and memory are checked in the worker before loading.\n"
+            + "\n".join(
+                f"{key}: {'downloaded' if ready[key]['ready'] else 'download required'}"
+                for key in model_profile(self.service.store.setting("scope_model", "9b"))["keys"]
+            )
+        )

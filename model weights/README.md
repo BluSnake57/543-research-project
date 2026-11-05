@@ -23,7 +23,8 @@ checkpoint if installed and no checkpoint is selected already. With only one val
 pair, that checkpoint is selected automatically. Otherwise select one in the app.
 A local `checkpoint_map.json` can override the default map.
 
-An optional `Qwen3.5-9B-Q4_K_M.gguf` is configured in place; keep it here afterward.
+GGUF files are unused on this branch and are not imported. Download the selected
+Qwen model and its matching Scope SAE from Models or the setup command.
 Other files, including `twitter15_llm_features.json`, are not automatically imported.
 Feature tables are inputs to training/evaluation, not model checkpoints.
 

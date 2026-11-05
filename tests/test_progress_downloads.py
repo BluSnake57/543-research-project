@@ -20,7 +20,6 @@ from sentinel_x.desktop import Window
 from sentinel_x.downloads import download, request, DownloadError
 from sentinel_x.jobs import Cancelled
 from sentinel_x.service import Service
-from sentinel_x.runtime import Llama
 from sentinel_x.state import Store
 from scripts.check_downloads import check_source
 
@@ -231,26 +230,6 @@ class ProgressIntegrationTests(unittest.TestCase):
         self.assertIn('invalid archive was removed', job['error'])
         self.assertFalse((self.service.store.root/'resources/fever/wiki-pages.zip').exists())
 
-    def test_runtime_reasoning_events_feed_transient_preview_and_budgeted_cpu_start(self):
-        runtime = self.service.runtime; runtime.port = 1234
-        response = Response(b'data: {"choices":[],"prompt_progress":{"processed":5,"total":10,"cache":0,"time_ms":10}}\n\n'
-            b'data: {"choices":[{"delta":{"reasoning_content":"Transient model thinking"}}]}\n\n'
-            b'data: {"choices":[{"delta":{"content":"{\\"summary\\":\\"ok\\",\\"claims\\":[]}"}}]}\n\n'
-            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n')
-        def work(job):
-            job.thinking_enabled = True
-            return runtime.stream([{'role': 'user', 'content': 'hi'}], [], job)
-        with patch.object(runtime, 'start'), patch.object(runtime, 'call', side_effect=[
-                {'prompt': 'thinking'}, {'prompt': 'direct'}, {'tokens': [1]}]), \
-             patch('sentinel_x.runtime.urllib.request.urlopen', return_value=response) as opened:
-            job = finish(self.service, self.service.jobs.submit('test-stream', work))
-        self.assertEqual(job['status'], 'completed', job.get('error'))
-        self.assertGreater(job['thinking_seconds'], 0)
-        self.assertTrue(any(e['event'] == 'prompt_progress' for e in job['events']))
-        self.assertNotIn('Transient model thinking', json.dumps(job))
-        payload = json.loads(opened.call_args.args[0].data)
-        self.assertTrue(payload['cache_prompt'])
-        self.assertTrue(payload['return_progress'])
 
     def test_setup_retry_preserves_selected_downloads(self):
         with patch.object(self.service.models, 'install', side_effect=DownloadError('offline')):
@@ -316,18 +295,6 @@ class ProgressIntegrationTests(unittest.TestCase):
         finally:
             release.set(); w.close()
 
-    def test_cpu_only_device_detection_and_generation_has_no_token_database_writes(self):
-        runtime = self.service.runtime
-        with patch('sentinel_x.runtime.subprocess.run', return_value=Mock(returncode=0,
-                stdout='Available devices:\n  OPENVINO0: GGML_OPENVINO_DEVICE=CPU (selected)\n', stderr='')):
-            self.assertEqual(runtime.select_acceleration('server', 'auto'), '0')
-        with patch('sentinel_x.runtime.subprocess.run', return_value=Mock(returncode=0,
-                stdout='Available devices:\n  CUDA0: NVIDIA GPU\n', stderr='')):
-            self.assertEqual(runtime.select_acceleration('server', 'auto'), 'auto')
-        job_id = self.service.jobs.submit('example', lambda job: [job.stream_piece('a') for _ in range(1000)])
-        job = finish(self.service, job_id)
-        self.assertLess(len(job['events']), 10)
-        self.assertFalse(any(e['event'] == 'token' for e in job['events']))
 
 
 if __name__ == '__main__': unittest.main()

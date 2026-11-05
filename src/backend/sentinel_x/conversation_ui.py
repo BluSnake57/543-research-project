@@ -147,7 +147,21 @@ def thinking_dropdown(key, label, text, expanded, truncated=False):
     return result
 
 
-def transcript_html(messages, preview=None, thinking_expanded=None):
+def scope_dropdown(key, records, expanded, edited=False):
+    from .scope import explanation_text
+    statuses = ', '.join(dict.fromkeys(r['status'] for r in records))
+    label = 'Explanation · Scope · ' + statuses
+    arrow = '▾' if expanded else '▸'
+    result = f'<p><a href="scope:{key}">{arrow} {escape(label)}</a></p>'
+    if edited:
+        result += '<p><i>Scope analysis belongs to the original response.</i></p>'
+    if expanded:
+        result += '<pre>' + escape(explanation_text(records)) + '</pre>'
+    return result
+
+
+def transcript_html(messages, preview=None, thinking_expanded=None, scope_expanded=None):
+    scope_expanded = scope_expanded or {}
     thinking_expanded = thinking_expanded or {}
     if not messages:
         return ('<h2>What would you like to investigate?</h2>'
@@ -180,6 +194,9 @@ def transcript_html(messages, preview=None, thinking_expanded=None):
                 pieces.append('<p><i>'+label+' · Trace was not saved for this older response.</i></p>')
         elif message['role'] == 'assistant' and data.get('thinking_enabled') and data.get('thinking_seconds') == 0:
             pieces.append('<p><i>Thinking was enabled; the model did not emit a separate thinking trace.</i></p>')
+        if data.get('scope'):
+            pieces.append(scope_dropdown(str(ident), data['scope'],
+                                         scope_expanded.get(str(ident), False), bool(data.get('revision'))))
         if data.get('revision') and message['role'] == 'assistant':
             pieces.append('<p><i>Edited answer. Assessments and evidence below belong '
                           'to the original generated response.</i></p>')
@@ -205,6 +222,9 @@ def transcript_html(messages, preview=None, thinking_expanded=None):
         if data.get('evidence') or data.get('tools') or data.get('reasoning_summary'):
             pieces.append(f'<p><a href="details:{ident}">Evidence and original research details</a></p>')
         pieces.append('<hr>')
+    if preview and preview.get('scope'):
+        key = preview.get('key', 'live')
+        pieces.append(scope_dropdown(key, preview['scope'], scope_expanded.get(key, False)))
     if preview and preview.get('active'):
         key = preview.get('key', 'live')
         pieces.append(thinking_dropdown(key, 'Thinking · '+duration(preview['seconds']),

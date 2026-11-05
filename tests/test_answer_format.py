@@ -89,28 +89,3 @@ class AnswerFormatTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(AnswerFormatError):
                 validate_answer(text, [])
         self.assertEqual(validate_answer('\ufeff```json\n{"summary":"ok","claims":[]}\n```', [])['summary'], 'ok')
-
-    def test_json_constraint_and_empty_streaming_frames(self):
-        runtime = self.service.runtime; runtime.port = 1234
-        job = Job(self.service.jobs, 'test'); job.require_json = True
-        packet = {'choices': [{'delta': {'content': '{"summary":"ok","claims":[]}'}}]}
-        frames = io.BytesIO(('data: \n\n: keep-alive\n\ndata: '+json.dumps(packet)+'\n\ndata: [DONE]\n').encode())
-        with patch.object(runtime, 'start'), patch.object(runtime, 'call', side_effect=[
-                {'prompt': 'prompt'}, {'tokens': [1]}]), \
-             patch('sentinel_x.runtime.urllib.request.urlopen', return_value=frames) as opened:
-            result = runtime.stream([{'role': 'user', 'content': 'test'}], [], job)
-        self.assertEqual(json.loads(result['content'])['summary'], 'ok')
-        self.assertEqual(json.loads(opened.call_args.args[0].data)['response_format'], {'type': 'json_object'})
-
-    def test_corrupt_streaming_packet_has_actionable_error(self):
-        runtime = self.service.runtime
-        with patch.object(runtime, 'start'), patch.object(runtime, 'call', side_effect=[
-                {'prompt': 'prompt'}, {'tokens': [1]}]), \
-             patch('sentinel_x.runtime.urllib.request.urlopen', return_value=io.BytesIO(b'data: broken\n')):
-            with self.assertRaisesRegex(RuntimeError, 'invalid streaming response'):
-                runtime.stream([], [], Job(self.service.jobs, 'test'))
-
-    def test_empty_server_response_names_the_failed_operation(self):
-        with patch('sentinel_x.runtime.urllib.request.urlopen', return_value=io.BytesIO(b'')):
-            with self.assertRaisesRegex(ValueError, 'invalid or empty response for /apply-template'):
-                self.service.runtime.call('/apply-template', {})

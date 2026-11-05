@@ -19,8 +19,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxkbcommon0
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
-      - run: python scripts/lock_manifest.py
       - run: python scripts/package_app.py
+      - if: runner.os == 'Linux'
+        run: dist/Sentinel-X/Sentinel-X --startup-check
+      - if: runner.os == 'Windows'
+        run: dist/Sentinel-X/Sentinel-X.exe --startup-check
+      - if: runner.os == 'macOS'
+        run: dist/Sentinel-X.app/Contents/MacOS/Sentinel-X --startup-check
       - uses: actions/upload-artifact@v4
         with:
           name: Sentinel-X-${{ matrix.os }}

@@ -169,15 +169,12 @@ class Models:
         self.manifest = manifest
 
     def catalog(self, key):
-        pinned = self.store.root / 'models' / f'{key}.lock.json'
-        if pinned.exists():
-            return json.loads(pinned.read_text())
         config = self.manifest[key]
+        pinned = self.store.root / 'models' / f'{key}.lock.json'
         if config.get('artifacts'):
-            data = {'repo': config['repo'], 'revision': config['revision'],
+            # Bundled pins take precedence over obsolete GGUF/download receipts.
+            return {'repo': config['repo'], 'revision': config['revision'],
                     'files': config['artifacts']}
-            pinned.write_text(json.dumps(data, indent=2))
-            return data
         repo = config['repo']; revision = config['revision']
         if not revision:
             revision = get_json(f'https://huggingface.co/api/models/{repo}')['sha']
@@ -207,7 +204,7 @@ class Models:
         return data
 
     def install(self, key, job=None):
-        if key not in ('qwen', 'embedding'):
+        if key not in ('qwen', 'scope', 'qwen_2b', 'scope_2b', 'embedding'):
             raise ValueError('Unknown model')
         if job:
             job.emit('stage', stage='Checking download sources')
@@ -227,16 +224,22 @@ class Models:
         return {'model': key, 'revision': catalog['revision']}
 
     def status(self):
-        return {key: {'ready': (self.store.root/'models'/key/'.ready').exists(),
-                      'path': str(self.store.root/'models'/key)} for key in ('qwen', 'embedding')}
+        result = {}
+        for key in ('qwen', 'scope', 'qwen_2b', 'scope_2b', 'embedding'):
+            folder = self.store.root / 'models' / key
+            marker = folder / '.ready'
+            ready = marker.is_file() and marker.read_text() == self.manifest[key]['revision']
+            result[key] = {'ready': ready, 'path': str(folder)}
+        return result
 
-    def import_qwen(self, source):
-        path = Path(source).expanduser().resolve()
-        with path.open('rb') as stream:
-            if stream.read(4) != b'GGUF':
-                raise ValueError('Not a GGUF model')
-        self.store.configure('qwen_path', str(path))
-        return {'path': str(path), 'warning': 'Local GGUF architecture and tool compatibility require a runtime smoke test'}
+    def verify(self, key, job=None):
+        catalog = self.catalog(key)
+        folder = self.store.root / 'models' / key
+        for item in catalog['files']:
+            path = folder / item['name']
+            if not path.is_file() or digest_file(path, item['algorithm'], job) != item['checksum']:
+                raise ValueError(f"Missing or corrupt {key}/{item['name']}; download it again in Models")
+        return {'model': key, 'revision': catalog['revision'], 'verified': True}
 
     def fever_status(self):
         root = self.store.root/'resources'/'fever'
@@ -339,45 +342,3 @@ class Models:
             temporary_receipt.replace(receipt)
             if job:
                 job.emit('extraction', file=item.filename, extracted=extracted, total=total, reused=reused)
-
-
-    def install_runtime(self, job=None, backend='cpu', activate=True):
-        from .runtime_packages import install_runtime
-        return install_runtime(self, job, backend, activate)
-
-
-def runtime_asset(assets, system, machine, backend='cpu'):
-    from .runtime_packages import asset_for
-    return asset_for(assets, system, machine, backend)
-
-
-def unpack_runtime_archive(archive, directory):
-    import tarfile
-    directory = Path(directory).resolve()
-    directory.mkdir(parents=True, exist_ok=True)
-    if zipfile.is_zipfile(archive):
-        with zipfile.ZipFile(archive) as bundle:
-            for item in bundle.infolist():
-                target = (directory/item.filename).resolve()
-                if not target.is_relative_to(directory):
-                    raise ValueError('Unsafe runtime archive path')
-            if shutil.disk_usage(directory).free < sum(x.file_size for x in bundle.infolist()):
-                raise ValueError('Not enough disk space to unpack runtime')
-            bundle.extractall(directory)
-    else:
-        with tarfile.open(archive) as bundle:
-            if shutil.disk_usage(directory).free < sum(x.size for x in bundle.getmembers()):
-                raise ValueError('Not enough disk space to unpack runtime')
-            bundle.extractall(directory, filter='data')
-
-
-def extract_runtime(archive, directory):
-    directory = Path(directory).resolve()
-    unpack_runtime_archive(archive, directory)
-    candidates = list(directory.rglob('llama-server')) + list(directory.rglob('llama-server.exe'))
-    if len(candidates) != 1:
-        raise ValueError('Runtime archive must contain one llama-server executable')
-    for path in directory.rglob('*'):
-        if path.is_file() and (path.name.startswith('llama-') or '.so' in path.name or path.suffix == '.dylib'):
-            path.chmod(path.stat().st_mode | 0o755)
-    return candidates[0]

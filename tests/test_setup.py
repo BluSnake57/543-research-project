@@ -34,18 +34,16 @@ class SetupTests(unittest.TestCase):
     def test_downloads_weights_only_never_runtime(self):
         def install(key, job):
             folder = self.service.store.root/'models'/key; folder.mkdir(exist_ok=True)
-            (folder/'.ready').write_text('test')
-            if key == 'qwen': (folder/'model.gguf').write_bytes(b'GGUF')
+            (folder/'.ready').write_text(self.service.models.manifest[key]['revision'])
             return {'model': key}
-        with patch.object(self.service.models, 'install', side_effect=install) as installer, \
-             patch.object(self.service.models, 'install_runtime', side_effect=AssertionError('Runtime must be bundled')):
+        with patch.object(self.service.models, 'install', side_effect=install) as installer:
             dialog = SetupDialog(self.service); dialog.start()
             deadline = time.monotonic()+5
             while self.service.jobs.get(dialog.job_id)['status'] not in ('completed', 'failed') and time.monotonic() < deadline:
                 time.sleep(.01)
             dialog.poll()
             self.assertEqual(self.service.jobs.get(dialog.job_id)['status'], 'completed')
-            self.assertEqual([call.args[0] for call in installer.call_args_list], ['qwen', 'embedding'])
+            self.assertEqual([call.args[0] for call in installer.call_args_list], ['qwen', 'scope', 'embedding'])
             self.assertFalse(dialog.choices['qwen'].isEnabled()); dialog.close()
         # Optional evidence is still offered on later launches until installed.
         self.assertTrue(needs_prompt(self.service))
@@ -91,7 +89,7 @@ class SetupTests(unittest.TestCase):
     def test_fever_setup_defaults_to_download_only_with_explicit_index_option(self):
         dialog = SetupDialog(self.service)
         try:
-            dialog.choices['qwen'].setChecked(False); dialog.choices['embedding'].setChecked(False)
+            dialog.choices['scope'].setChecked(False); dialog.choices['qwen'].setChecked(False); dialog.choices['embedding'].setChecked(False)
             dialog.choices['fever'].setChecked(True)
             self.assertTrue(dialog.index_fever.isEnabled()); self.assertFalse(dialog.index_fever.isChecked())
             with patch.object(self.service, 'setup', return_value='fixture') as setup:

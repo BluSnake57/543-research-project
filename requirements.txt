@@ -5,5 +5,10 @@ numpy>=2.1
 PySide6-Essentials>=6.8,<7
 torch>=2.6,<3
 sentence-transformers>=3.4,<6
+bitsandbytes==0.50.2
+transformers==5.22.1
+accelerate==1.14.0
+safetensors==0.8.0
+psutil>=6,<8
 # This project itself is pure Python and installs in editable mode.
 -e .

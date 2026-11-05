@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .activity_ui import job_summary, update_job_rows
+from .config import model_profile
 from .runtime_ui import RuntimePanel
 from .conversation_ui import MessageComposer, MessageEditor, GenerationStatus, transcript_html
 from .service import Service
@@ -32,6 +33,7 @@ class Window(CheckpointControls, QMainWindow):
         self.dialogs = []; self.latest_jobs = []; self.closed = False
         self.rendered_conversation = None; self.rendered_signature = None
         self.thinking_expanded = {}
+        self.scope_expanded = {}
         self.loading_draft = False; self.import_feedback = {}
         self.setWindowTitle('Sentinel-X · Evidence & propagation'); self.resize(1320, 900)
         self.setMinimumSize(900, 650)
@@ -298,14 +300,14 @@ class Window(CheckpointControls, QMainWindow):
         preview = live_job.preview() if live_job and live_job.data['status'] != 'completed' else None
         if preview:
             preview['key'] = 'live-'+live_job.data['id']
-        signature = repr((messages, preview, self.thinking_expanded))
+        signature = repr((messages, preview, self.thinking_expanded, self.scope_expanded))
         changed_conversation = self.rendered_conversation != self.conversation
         if signature == self.rendered_signature and not changed_conversation:
             return
         scroll = self.transcript.verticalScrollBar()
         old = scroll.value()
         follow = changed_conversation or scroll.maximum()-old < 35
-        self.transcript.setHtml(transcript_html(messages, preview, self.thinking_expanded))
+        self.transcript.setHtml(transcript_html(messages, preview, self.thinking_expanded, self.scope_expanded))
         scroll.setValue(scroll.maximum() if follow else old)
         self.rendered_signature = signature
         self.rendered_conversation = self.conversation
@@ -320,6 +322,10 @@ class Window(CheckpointControls, QMainWindow):
         if action == 'action':
             if value == 'import': self.import_posts()
             elif value == 'evidence': self.navigation.setCurrentRow(1)
+            return
+        if action == 'scope':
+            self.scope_expanded[value] = not self.scope_expanded.get(value, False)
+            self.render_messages()
             return
         if action == 'thinking':
             active = next((j for j in self.service.jobs.live.values() if 'live-'+j.data['id'] == value), None)
@@ -540,20 +546,17 @@ class Window(CheckpointControls, QMainWindow):
         self.model_status = QLabel(); self.model_status.setWordWrap(True); layout.addWidget(self.model_status)
         layout.addWidget(self.button('Set up downloads…', lambda: self.offer_setup(force=True)))
         self.runtime_panel = RuntimePanel(self.service, self); layout.addWidget(self.runtime_panel)
-        layout.addWidget(self.button('Import local chat model (.gguf)', self.import_model))
         self.checkpoint_controls(layout)
         layout.addWidget(self.button('Open separate GraphSAGE trainer', self.open_trainer))
         layout.addWidget(self.button('Refresh trained checkpoints', self.refresh_checkpoints))
         advanced_button = QPushButton('Advanced settings ▸'); advanced_button.setCheckable(True)
         layout.addWidget(advanced_button)
         advanced = QWidget(); self.advanced = advanced; inner = QVBoxLayout(advanced)
-        inner.addWidget(self.button('Choose llama-server executable', self.choose_runtime))
         inner.addWidget(self.button('Verify generation and tools', lambda: self.watch(self.service.smoke())))
         form = QFormLayout()
         self.context = QComboBox()
         for tokens in (2048, 4096, 8192, 16384, 32768): self.context.addItem(str(tokens), tokens)
-        self.acceleration = QComboBox(); self.acceleration.addItem('Automatic GPU offload', 'auto'); self.acceleration.addItem('CPU only', '0')
-        form.addRow('Context tokens', self.context); form.addRow('Acceleration', self.acceleration); inner.addLayout(form)
+        form.addRow('Context tokens', self.context); inner.addLayout(form)
         self.thinking_budget = QSpinBox(); self.thinking_budget.setRange(64, 2048); self.thinking_budget.setSingleStep(64)
         form.addRow('Maximum thinking tokens', self.thinking_budget)
         inner.addWidget(self.button('Apply runtime settings', self.apply_settings))
@@ -561,7 +564,7 @@ class Window(CheckpointControls, QMainWindow):
         layout.addWidget(advanced); advanced.hide()
         advanced_button.toggled.connect(advanced.setVisible)
         advanced_button.toggled.connect(lambda checked: advanced_button.setText('Advanced settings ▾' if checked else 'Advanced settings ▸'))
-        note = QLabel('Chat runs on this device. The 9B model needs several GB of memory; CPU responses can take longer.')
+        note = QLabel('Chat runs on this device. Quantized models use capped memory budgets. Offloading and the 2B fallback are available in Models; actual fit requires validation.')
         note.setWordWrap(True); layout.addWidget(note); layout.addStretch()
 
     def open_trainer(self):
@@ -583,32 +586,22 @@ class Window(CheckpointControls, QMainWindow):
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.notice.setText('Sentinel-X Trainer opened as a separate application')
 
-    def import_model(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Import Qwen GGUF', '', 'GGUF models (*.gguf)')
-        if path: self.service.import_model(path); self.refresh_models()
-
-    def choose_runtime(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Choose llama-server executable')
-        if path: self.service.configure(llama_path=path); self.refresh_models()
-
     def apply_settings(self):
-        self.service.configure(context=self.context.currentData(), gpu_layers=self.acceleration.currentData(),
+        self.service.configure(context=self.context.currentData(),
                                thinking_budget=self.thinking_budget.value()); self.refresh_models()
 
     def refresh_models(self, sync_controls=True):
         status = self.service.status()
         self.refresh_fever(status['fever'])
         self.runtime_panel.refresh()
-        runtime_ready = bool(status['llama_path'] and Path(status['llama_path']).is_file())
-        chat_ready = runtime_ready and bool(status['qwen_path'] and Path(status['qwen_path']).is_file())
+        chat_ready = all(status['models'][key]['ready'] for key in model_profile(status['scope_model'])['keys'])
         self.setup_hint.setVisible(not chat_ready)
         self.model_status.setText('Chat: '+('Ready' if chat_ready else 'Setup needed')+
             '\nSemantic search: '+('Ready' if status['models']['embedding']['ready'] else 'Keyword search available · embeddings optional')+
             '\nVirality: '+('Checkpoint selected' if status['checkpoint'] else 'Choose a trained checkpoint'))
-        self.runtime_details.setText(f'Runtime: {status["llama_path"] or "missing"}\nModel: {status["qwen_path"] or "missing"}\nData: {status["root"]}')
+        self.runtime_details.setText(f'Transformers + Qwen-Scope · {status["scope_device"]}\nData: {status["root"]}')
         if sync_controls:
             self.context.setCurrentIndex(self.context.findData(status['context']))
-            self.acceleration.setCurrentIndex(self.acceleration.findData(status['gpu_layers']))
             self.thinking_budget.setValue(status['thinking_budget'])
 
     def refresh_fever(self, fever=None):
@@ -653,7 +646,7 @@ class Window(CheckpointControls, QMainWindow):
         self.cancel_job_button.setEnabled(bool(job and job['status'] not in DONE and not job.get('cancelling')))
         self.job_details_button.setEnabled(job is not None)
         retry = bool(job and job['status'] in ('failed', 'cancelled', 'interrupted') and
-                     (job['kind'] in ('fever', 'fever-index', 'download:qwen', 'download:embedding') or
+                     (job['kind'] in ('fever', 'fever-index', 'download:qwen', 'download:scope', 'download:embedding') or
                       job['kind'].startswith('runtime-download:') or
                       (job['kind'] == 'setup' and job.get('request'))))
         self.retry_job_button.setEnabled(retry)

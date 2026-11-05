@@ -1,6 +1,11 @@
 # Sentinel-X
 
-**Quick start:** run `python scripts/setup_environment.py`, then `python run.py`
+This working branch uses quantized Transformers generation with mandatory Qwen-Scope.
+Models offers both 9B and 2B paired downloads and explicit CPU offloading.
+See [Scope configuration and validation status](docs/SCOPE.md). Memory fit and
+full-model execution are not yet validated; release packaging remains unfinished.
+
+**Quick start:** run `python run.py setup`, then `python run.py`
 (use `python3` on Linux/macOS or `py -3.13` on Windows).
 See [setup.md](setup.md) for prerequisites, model downloads, and checkpoint setup.
 
@@ -130,7 +135,7 @@ Important project modules include:
 - `assistant.py` - coordinates chat, evidence analysis, semantic extraction and virality requests.
 - `graphs.py` - graph ingestion, validation, repair, normalization and graph features.
 - `learning.py` - GraphSAGE training, evaluation, baselines, ablation support and prediction.
-- `runtime.py` - local Qwen/llama.cpp runtime communication.
+- `runtime.py` - isolated Qwen + Scope worker communication.
 - `service.py` - application services, imports, jobs, models and graph storage.
 - `trainer.py` - separate GraphSAGE training interface.
 - `skills.py` - controlled tool registration for evidence search and GraphSAGE prediction.
@@ -213,7 +218,7 @@ The decision cutoff is selected using validation data rather than automatically 
 
 # Qwen Semantic Analysis
 
-The project uses a local **Qwen3.5-9B** model through a llama.cpp-compatible runtime.
+The project uses a local **Qwen3.5-9B** model through a quantized Transformers worker with mandatory Scope analysis.
 
 Qwen was used to extract five semantic characteristics from source tweets:
 
@@ -491,7 +496,7 @@ Start the desktop application from the repository root:
 python -m sentinel_x.cli gui
 ```
 
-The initial setup screen can download/configure the local Qwen model, semantic-search model and supported llama.cpp runtime.
+The Models screen offers 9B and 2B downloads, each with its matching Scope SAE, plus device and CPU-offload selection.
 
 ---
 

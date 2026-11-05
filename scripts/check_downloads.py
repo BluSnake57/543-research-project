@@ -16,18 +16,14 @@ from sentinel_x.state import Store
 
 
 def check_source(models, source, directory):
-    if source == 'embedding':
-        item = next(x for x in models.catalog('embedding')['files'] if x['name'] == 'config.json')
-        path = download(item['url'], directory/'embedding-config.json', item['checksum'],
+    if source in ('embedding', 'qwen', 'scope'):
+        item = next(x for x in models.catalog(source)['files'] if x['name'] == 'config.json')
+        path = download(item['url'], directory/(source+'-config.json'), item['checksum'],
                         item['size'], algorithm=item['algorithm'])
         if not isinstance(json.loads(path.read_text()), dict):
             raise ValueError('Downloaded config is not a JSON object')
         return 'Downloaded complete config and verified its size and checksum.'
-    if source == 'qwen':
-        item = next(x for x in models.catalog('qwen')['files'] if x['name'].endswith('.gguf'))
-        url, magic = item['url'], b'GGUF'
-    else:
-        url, magic = models.manifest['fever']['evidence'], b'PK\x03\x04'
+    url, magic = models.manifest['fever']['evidence'], b'PK\x03\x04'
     with request(url, {'Range': 'bytes=0-3'}) as response:
         if response.read(4) != magic:
             raise ValueError('Download source did not return the expected file header')
@@ -36,12 +32,12 @@ def check_source(models, source, directory):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', choices=('all', 'embedding', 'qwen', 'fever'), default='all')
+    parser.add_argument('--source', choices=('all', 'embedding', 'qwen', 'scope', 'fever'), default='all')
     options = parser.parse_args(argv)
     results = []; failed = False
     with tempfile.TemporaryDirectory(prefix='sentinel-download-check-') as temporary:
         directory = Path(temporary); models = Models(Store(directory), manifest())
-        for source in (('embedding', 'qwen', 'fever') if options.source == 'all' else (options.source,)):
+        for source in (('embedding', 'qwen', 'scope', 'fever') if options.source == 'all' else (options.source,)):
             try:
                 results.append({'source': source, 'passed': True,
                                 'detail': check_source(models, source, directory)})

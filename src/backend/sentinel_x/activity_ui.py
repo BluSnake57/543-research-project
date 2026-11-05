@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QProgressBar, QTreeWidgetItem
 
 DONE = {'completed', 'failed', 'cancelled', 'interrupted'}
 NAMES = {
+    'download:scope': 'Download Scope SAE', 'scope-verify': 'Verify Qwen and Scope checksums',
     'setup': 'Set up models and evidence', 'download:qwen': 'Download chat model',
     'download:embedding': 'Download evidence-search model', 'fever': 'Download Wikipedia evidence',
     'fever-index': 'Build / resume Wikipedia search index',
@@ -41,13 +42,9 @@ def job_summary(job, titles=None, now=None):
     """Progress is for the current transfer/phase, never a fabricated overall percentage."""
     status = job['status']; terminal = status in DONE
     events = job.get('events', [])
-    relevant = {'stage', 'download', 'file', 'indexing', 'vector_index', 'extraction', 'runtime', 'prompt_progress'}
+    relevant = {'stage', 'download', 'file', 'indexing', 'vector_index', 'extraction', 'runtime', 'prompt_progress', 'scope_progress', 'scope_status'}
     latest = next((e for e in reversed(events) if e['event'] in relevant), {})
     name = NAMES.get(job['kind'], job['kind'].replace('-', ' ').capitalize())
-    if job['kind'].startswith(('runtime-download:', 'runtime-activate:')):
-        from .runtime_packages import LABELS
-        backend = job['kind'].split(':', 1)[1]
-        name = ('Download ' if job['kind'].startswith('runtime-download:') else 'Select ')+LABELS.get(backend, 'included')+' engine'
     if job['kind'].startswith('chat:'):
         ident = job['kind'].split(':', 1)[1]
         name = 'Generate response · '+(titles or {}).get(ident, 'Conversation')
@@ -83,6 +80,10 @@ def job_summary(job, titles=None, now=None):
             done, total = latest.get('completed_files', 0), latest['total_files']
             detail += f' · {done:,} of {total:,} files complete'
             percent = min(100, int(100*done/total)); progress_label = f'{percent}% of files'
+    elif event == 'scope_progress':
+        detail = f"Explanation · Scope · {latest.get('tokens', 0):,} tokens measured"
+    elif event == 'scope_status':
+        detail = 'Explanation · Scope · ' + latest.get('status', 'running')
     elif event == 'prompt_progress':
         done, total = latest.get('processed', 0), latest.get('total')
         detail = f'Processing prompt · {done:,} of {total or 0:,} tokens'

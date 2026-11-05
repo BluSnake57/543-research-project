@@ -7,14 +7,13 @@ import platform
 import shutil
 
 from .assistant import Assistant
-from .config import ASSETS, bundled_runtime, manifest
+from .config import ASSETS, manifest, MODEL_KEYS, model_profile
 from .downloads import Models
 from .graphs import (estimate_graph, native_twitter, normalize_posts, read_posts,
                      suggest_mapping, validate_graph)
 from .jobs import Jobs
 from .retrieval import Retrieval
-from .runtime import Llama
-from .runtime_packages import LABELS, runtime_choices, probe_runtime
+from .runtime import ScopeRuntime
 from .skills import Skills
 from .state import Store, data_directory
 
@@ -26,7 +25,7 @@ class Service:
         self.store = Store(Path(root) if root else data_directory())
         self.jobs = Jobs(self.store, table='trainer_jobs' if role == 'trainer' else 'jobs')
         self.retrieval = Retrieval(self.store)
-        self.runtime = Llama(self.store, bundled_runtime())
+        self.runtime = ScopeRuntime(self.store)
         self.models = Models(self.store, manifest())
         self.skills = Skills([ASSETS/'skills', self.store.root/'skills'], self.store)
         self.assistant = Assistant(self.store, self.retrieval, self.runtime, self.skills)
@@ -45,42 +44,43 @@ class Service:
             self.runtime.stop(wait=False)
 
     def status(self):
-        executable, model = self.runtime.configured()
         return {'root': str(self.store.root), 'models': self.models.status(),
                 'resources': self.store.setting('resources', str(self.store.root/'resources')),
-                'llama_path': executable, 'qwen_path': model,
                 'checkpoint': self.store.setting('checkpoint'),
                 'context': self.store.setting('context', 8192),
-                'gpu_layers': str(self.store.setting('gpu_layers', 'auto')),
+                'scope_device': self.store.setting('scope_device', 'cuda'),
+                'scope_model': self.store.setting('scope_model', '9b'),
+                'scope_offload': self.store.setting('scope_offload', 'none'),
                 'thinking_budget': self.store.setting('thinking_budget', 256),
-                'installed_runtimes': self.store.setting('installed_runtimes', {}),
-                'fever': self.models.fever_status(),
-                'running_runtime': self.runtime.active,
+                'fever': self.models.fever_status(), 'running_runtime': self.runtime.active,
                 'first_run': not self.store.setting('setup_started', False)}
 
     def configure(self, **values):
-        if set(values) - {'resources', 'context', 'gpu_layers', 'llama_path', 'checkpoint', 'thinking_budget'}:
+        if set(values) - {'resources', 'context', 'scope_device', 'scope_model', 'scope_offload', 'checkpoint', 'thinking_budget'}:
             raise ValueError('Unknown setting')
         for key, value in values.items():
+            if key == 'scope_model': model_profile(value)
+            if key == 'scope_offload' and value not in ('none', 'sae', 'modules'):
+                raise ValueError('Unknown CPU offload policy')
             if key == 'thinking_budget' and (not isinstance(value, int) or not 64 <= value <= 2048):
                 raise ValueError('Thinking budget must be between 64 and 2048 tokens')
             if key == 'context' and (not isinstance(value, int) or not 2048 <= value <= 32768):
                 raise ValueError('Context must be between 2048 and 32768')
-            if key == 'gpu_layers' and str(value) != 'auto' and (not str(value).isdigit() or int(value) > 999):
-                raise ValueError('GPU layers must be auto or 0–999')
+            if key == 'scope_device' and value not in ('cuda', 'cpu'):
+                raise ValueError('Scope device must be cuda or cpu')
             if key == 'checkpoint' and value and (not isinstance(value, str) or not value.isalnum() or
                     not (self.store.root/'checkpoints'/f'{value}.json').is_file()):
                 raise ValueError('Checkpoint not found')
-            if key in ('llama_path', 'resources') and not isinstance(value, str):
+            if key == 'resources' and not isinstance(value, str):
                 raise ValueError('Path must be a string')
         for key, value in values.items():
             self.store.configure(key, value)
-        if set(values) & {'context', 'gpu_layers', 'llama_path', 'thinking_budget'}:
+        if set(values) & {'context', 'scope_device', 'scope_model', 'scope_offload', 'thinking_budget'}:
             self.runtime.stop()
 
-    def setup(self, keys=('qwen', 'embedding'), fever=False, index_fever=False):
+    def setup(self, keys=('qwen', 'scope', 'embedding'), fever=False, index_fever=False):
         keys = tuple(keys)
-        if set(keys) - {'qwen', 'embedding'}:
+        if set(keys) - set(MODEL_KEYS):
             raise ValueError('Only model weights are downloaded during setup')
         self.store.configure('setup_started', True)
         def work(job):
@@ -93,59 +93,24 @@ class Service:
         return self.jobs.submit('setup', work,
             request={'keys': list(keys), 'fever': fever, 'index_fever': index_fever})
 
+    def download_pair(self, name):
+        return self.setup(keys=model_profile(name)['keys'])
+
     def download(self, key):
-        if key not in ('qwen', 'embedding'):
+        if key not in MODEL_KEYS:
             raise ValueError('Unknown download')
         return self.jobs.submit('download:'+key, lambda job: self.models.install(key, job))
 
-    def download_runtime(self, backend, use_after_download=True):
-        if backend not in runtime_choices():
-            raise ValueError('This runtime is not supported on the current platform')
-        def work(job):
-            result = self.models.install_runtime(job, backend=backend, activate=False)
-            job.check()
-            if use_after_download:
-                result = {**result, 'activation_job': self.activate_runtime(backend)}
-            return result
-        return self.jobs.submit('runtime-download:'+backend, work,
-            request={'backend': backend, 'use_after_download': use_after_download})
-
-    def activate_runtime(self, backend):
-        if backend != 'bundled' and backend not in LABELS:
-            raise ValueError('Unknown runtime')
-        def work(job):
-            job.emit('stage', stage='Checking runtime before switching engines')
-            if backend == 'bundled':
-                folder = self.runtime.bundled
-                candidates = list(folder.rglob('llama-server'))+list(folder.rglob('llama-server.exe')) if folder else []
-                if not candidates:
-                    raise ValueError('Bundled runtime is missing')
-                path = str(candidates[0]); directories = [str(candidates[0].parent)]
-            else:
-                entry = self.store.setting('installed_runtimes', {}).get(backend)
-                if not entry or not Path(entry['executable']).is_file():
-                    raise ValueError('Download this runtime first')
-                path = entry['executable']; directories = entry['library_dirs']
-            checked = probe_runtime(path, manifest()['llama_cpp']['commit'], directories,
-                                    'cpu' if backend == 'bundled' else backend)
-            if backend not in ('cpu', 'bundled') and not checked['devices']:
-                raise ValueError('Runtime installed, but no compatible GPU was detected. '
-                                 'Check graphics drivers or use the bundled CPU runtime.')
-            job.check()
-            self.runtime.stop()
-            self.store.configure('llama_path', path)
-            self.store.configure('gpu_layers', 'auto' if backend != 'cpu' or platform.system() == 'Darwin' else '0')
-            return {'backend': backend, 'executable': path, 'devices': checked['devices'], 'activated': True}
-        return self.jobs.submit('runtime-activate:'+backend, work)
+    def verify_scope(self):
+        return self.jobs.submit('scope-verify', lambda job: {
+            key: self.models.verify(key, job) for key in model_profile(self.store.setting('scope_model', '9b'))['keys']})
 
     def retry_download(self, ident):
         job = self.jobs.get(ident)
         if job['status'] not in ('failed', 'cancelled', 'interrupted'):
             raise ValueError('Only stopped or failed downloads can be retried.')
-        if job['kind'] in ('download:qwen', 'download:embedding'):
+        if job['kind'] in tuple('download:'+key for key in MODEL_KEYS):
             return self.download(job['kind'].split(':', 1)[1])
-        if job['kind'].startswith('runtime-download:'):
-            return self.download_runtime(job['request']['backend'], job['request']['use_after_download'])
         if job['kind'] == 'fever':
             return self.fever(job.get('request', {}).get('index', False))
         if job['kind'] == 'fever-index':
@@ -153,10 +118,6 @@ class Service:
         if job['kind'] == 'setup' and job.get('request'):
             return self.setup(job['request']['keys'], job['request']['fever'], job['request'].get('index_fever', False))
         raise ValueError('Reopen the original action to retry this task.')
-
-    def import_model(self, path):
-        self.runtime.stop()
-        return self.models.import_qwen(path)
 
     def smoke(self):
         def work(job):
@@ -172,7 +133,10 @@ class Service:
             if not calls or calls[0]['function']['name'] != 'smoke_echo':
                 raise ValueError('Qwen function calling is incompatible with this runtime/model')
             json.loads(calls[0]['function']['arguments'])
-            return {'generation': True, 'function_calling': True}
+            records = job.data.get('scope', [])
+            if not records or any(r['status'] != 'complete' or not r['tokens'] for r in records):
+                raise ValueError('Scope smoke check failed: missing or incomplete measurements')
+            return {'generation': True, 'function_calling': True, 'scope': True}
         return self.jobs.submit('qwen-smoke', work)
 
     def chat(self, conversation, text, graph_ids, thinking=False):

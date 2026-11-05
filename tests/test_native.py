@@ -13,7 +13,6 @@ import zipfile
 import numpy as np
 
 from sentinel_x.config import ASSETS
-from sentinel_x.downloads import extract_runtime, runtime_asset
 from sentinel_x.retrieval import Retrieval
 from sentinel_x.service import Service
 
@@ -109,40 +108,6 @@ class NativeServices(unittest.TestCase):
         finish(self.service, self.service.index(self.root/'resources'))
         result = finish(self.service, self.service.search('Mars'))
         self.assertIn('Mars', result[0]['text'])
-
-    def test_precompiled_runtime_installer_with_verified_archive(self):
-        stream = io.BytesIO()
-        with zipfile.ZipFile(stream, 'w') as archive:
-            archive.writestr('llama/llama-server', '#!/bin/sh\nexit 0\n')
-        payload = stream.getvalue()
-        asset = {'name': 'llama-b123-bin-ubuntu-x64.zip', 'size': len(payload),
-                 'digest': 'sha256:'+hashlib.sha256(payload).hexdigest(),
-                 'browser_download_url': 'https://example.com/runtime.zip'}
-        class Response(io.BytesIO):
-            status = 200
-            headers = {'Content-Length': str(len(payload))}
-        with patch('sentinel_x.downloads.get_json', return_value={'assets': [asset]}), \
-             patch('sentinel_x.downloads.request', return_value=Response(payload)), \
-             patch('sentinel_x.runtime_packages.subprocess.run', side_effect=[
-                 CompletedProcess([], 0, 'version: 11960 (8642541b2)', ''),
-                 CompletedProcess([], 0, 'Available devices:\n', '')]), \
-             patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='x86_64'):
-            result = self.service.models.install_runtime()
-        self.assertTrue(result['precompiled'])
-        executable = Path(result['executable']); self.assertTrue(executable.exists())
-        self.assertEqual(self.service.runtime.configured()[0], str(executable))
-        self.assertTrue(os.access(executable, os.X_OK))
-
-    def test_runtime_platform_selection_and_unsafe_archive(self):
-        names = ['llama-bin-win-cuda-x64.zip', 'llama-bin-win-cpu-x64.zip', 'llama-bin-macos-arm64.tar.gz']
-        assets = [{'name': n} for n in names]
-        self.assertEqual(runtime_asset(assets, 'Windows', 'AMD64')['name'], names[1])
-        self.assertEqual(runtime_asset(assets, 'Darwin', 'arm64')['name'], names[2])
-        archive = self.root/'bad.zip'
-        with zipfile.ZipFile(archive, 'w') as bundle: bundle.writestr('../escape', 'bad')
-        with self.assertRaises(ValueError): extract_runtime(archive, self.root/'unpacked')
-        self.assertFalse((self.root/'escape').exists())
-
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 try:

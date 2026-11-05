@@ -29,7 +29,7 @@ class Job:
             previous = events[-1] if events else {}
             # Repeated samples describe the current phase, rather than an unbounded history
             # that gets serialized and rewritten for every update during a multi-hour import.
-            replace = (event in ('download', 'extraction', 'indexing', 'vector_index', 'prompt_progress') and
+            replace = (event in ('download', 'extraction', 'indexing', 'vector_index', 'prompt_progress', 'scope_progress') and
                 previous.get('event') == event and not previous.get('file_complete') and
                 not payload.get('file_complete') and all(previous.get(key) == payload.get(key)
                                                          for key in ('path', 'file')))
@@ -92,7 +92,8 @@ class Job:
                 seconds += time.monotonic()-self.thinking_started
             return {'text': self.thinking_text, 'active': self.thinking_started is not None,
                     'trace': self.thinking_trace, 'trace_truncated': self.thinking_trace_truncated,
-                    'seconds': seconds, 'answer': self.answer_text}
+                    'seconds': seconds, 'answer': self.answer_text,
+                    **({'scope': self.data['scope']} if self.data.get('scope') else {})}
 
 
 class Jobs:

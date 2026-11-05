@@ -1,6 +1,6 @@
-"""Check Thinking Off/On using the app's real local-server streaming path.
+"""Check Thinking Off/On using the app's real Scope worker streaming path.
 
-Uses an existing GGUF and bundled runtime, without downloading any files.
+Uses pinned Qwen and Scope files in application storage, without downloading files.
 Exit 0: both verified; 1: failed; 2: On accepted but no thinking was observed.
 """
 import argparse
@@ -50,20 +50,14 @@ def check_mode(service, enabled, timeout):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--model', required=True, type=Path, help='Existing local GGUF file')
-    parser.add_argument('--runtime', type=Path, help='Optional llama-server executable override')
+    parser.add_argument('--data-dir', required=True, type=Path)
     parser.add_argument('--timeout', type=int, default=300, help='Seconds allowed per mode, including model loading')
     args = parser.parse_args(argv)
-    if not args.model.is_file():
-        parser.error('The model file does not exist')
     if args.timeout < 1:
         parser.error('Timeout must be positive')
     results = []
-    with tempfile.TemporaryDirectory(prefix='sentinel-thinking-check-') as temporary:
-        service = Service(Path(temporary))
-        service.store.configure('qwen_path', str(args.model.resolve()))
-        if args.runtime:
-            service.configure(llama_path=str(args.runtime.resolve()))
+    service = Service(args.data_dir)
+    if True:
         try:
             for enabled in (False, True):
                 try:

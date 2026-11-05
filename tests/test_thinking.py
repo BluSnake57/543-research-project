@@ -39,58 +39,9 @@ class ThinkingTests(unittest.TestCase):
     def tearDown(self):
         self.service.close(); self.service.jobs.shutdown(wait=True); self.temp.cleanup()
 
-    def test_explicit_budget_changes_per_request_without_restarting_runtime(self):
-        self.service.store.configure('thinking_budget', 128)
-        for enabled in (False, True, False):
-            with self.subTest(enabled=enabled):
-                job = Job(self.service.jobs, 'test'); job.thinking_enabled = enabled
-                def template(path, body):
-                    if path == '/tokenize': return {'tokens': [1]}
-                    return {'prompt': 'on' if body['chat_template_kwargs']['enable_thinking'] else 'off'}
-                with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', side_effect=template) as calls, \
-                     patch('sentinel_x.runtime.urllib.request.urlopen', return_value=wire({'content': 'answer'})) as opened:
-                    self.runtime.stream([{'role': 'user', 'content': 'hello'}], [], job)
-                payload = json.loads(opened.call_args.args[0].data)
-                self.assertEqual(payload['reasoning_budget_tokens'], 128 if enabled else 0)
-                self.assertEqual(payload['reasoning_format'], 'deepseek')
-                first_template = calls.call_args_list[0].args[1]
-                self.assertEqual(first_template['reasoning_budget_tokens'], payload['reasoning_budget_tokens'])
-                self.assertEqual(first_template['chat_template_kwargs'], payload['chat_template_kwargs'])
 
-    def test_off_rejects_runtime_that_ignores_the_switch(self):
-        job = Job(self.service.jobs, 'test'); job.thinking_enabled = False
-        with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', side_effect=[
-                {'prompt': 'off'}, {'tokens': [1]}]), \
-             patch('sentinel_x.runtime.urllib.request.urlopen', return_value=wire({'reasoning_content': 'Unexpected thinking'})):
-            with self.assertRaisesRegex(ValueError, 'Thinking Off'):
-                self.runtime.stream([], [], job)
-        self.assertFalse(job.preview()['active'])
-        self.assertNotIn('Unexpected thinking', json.dumps(job.data))
 
-    def test_off_ignores_empty_reasoning_fields(self):
-        job = Job(self.service.jobs, 'test'); job.thinking_enabled = False
-        with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', side_effect=[
-                {'prompt': 'off'}, {'tokens': [1]}]), \
-             patch('sentinel_x.runtime.urllib.request.urlopen', return_value=wire(
-                 {'reasoning_content': ' \n'}, {'content': 'Direct answer'})):
-            answer = self.runtime.stream([], [], job)
-        self.assertEqual(answer['content'], 'Direct answer')
-        self.assertFalse(any(e.get('stage') == 'Thinking' for e in job.data['events']))
 
-    def test_reasoning_alias_same_packet_answer_and_tool_transition(self):
-        job = Job(self.service.jobs, 'test'); job.thinking_enabled = True
-        with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', side_effect=[
-                {'prompt': 'on'}, {'prompt': 'off'}, {'tokens': [1]}]), \
-             patch('sentinel_x.runtime.urllib.request.urlopen', return_value=wire(
-                 {'reasoning': 'Example transient text'},
-                 {'reasoning_content': ' more text', 'content': 'Answer'},
-                 {'tool_calls': [{'index': 0, 'id': 'call1', 'function': {'name': 'lookup', 'arguments': '{}'}}]})):
-            answer = self.runtime.stream([], [], job)
-        self.assertEqual(answer['content'], 'Answer')
-        self.assertEqual(answer['tool_calls'][0]['function']['name'], 'lookup')
-        self.assertFalse(job.preview()['active']); self.assertEqual(job.preview()['text'], '')
-        self.assertGreater(job.data['thinking_seconds'], 0)
-        self.assertNotIn('transient text', json.dumps(job.data)+json.dumps(answer))
 
     def test_multiple_thinking_phases_accumulate_only_active_time(self):
         job = Job(self.service.jobs, 'test')
@@ -126,17 +77,6 @@ class ThinkingTests(unittest.TestCase):
             self.assertNotIn('temporary cancel text', json.dumps(cancelled))
         finally: release.set()
 
-    def test_structured_helpers_explicitly_disable_thinking(self):
-        job = Mock()
-        with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', return_value={
-                'choices': [{'message': {'content': '{"ready":true}'}}]}) as call:
-            self.assertEqual(self.runtime.structured('check', job), {'ready': True})
-        self.assertEqual(call.call_args.args[1]['reasoning_budget_tokens'], 0)
-        self.assertFalse(call.call_args.args[1]['chat_template_kwargs']['enable_thinking'])
-        with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', return_value={
-                'choices': [{'message': {'content': '{}', 'reasoning_content': 'unexpected'}}]}):
-            with self.assertRaisesRegex(ValueError, 'Thinking Off'):
-                self.runtime.structured('check', job)
 
     def test_empty_thinking_is_not_counted_or_presented_as_real_thinking(self):
         job = Job(self.service.jobs, 'test')
@@ -170,47 +110,9 @@ class ThinkingTests(unittest.TestCase):
         self.assertTrue(job.thinking_trace.endswith('final segment'))
         self.assertTrue(job.thinking_trace_truncated)
 
-    def test_blocked_port_produces_actionable_error_before_model_load(self):
-        dummy = self.service.store.root/'model'; dummy.touch()
-        with patch.object(self.runtime, 'configured', return_value=(str(dummy), str(dummy))), \
-             patch('sentinel_x.runtime.socket.socket', side_effect=PermissionError('blocked')), \
-             patch('sentinel_x.runtime.subprocess.Popen') as spawn:
-            with self.assertRaisesRegex(RuntimeError, 'loopback port'):
-                self.runtime.start()
-        spawn.assert_not_called()
 
-    def test_live_check_reports_verified_modes_only_when_thinking_is_observed(self):
-        def template(path, body):
-            if path == '/tokenize': return {'tokens': [1]}
-            return {'prompt': 'on' if body['chat_template_kwargs']['enable_thinking'] else 'off'}
-        for enabled in (False, True):
-            deltas = [{'content': '{"summary":"2/5","claims":[]}'}]
-            if enabled:
-                deltas.insert(0, {'reasoning_content': 'Example diagnostic reasoning'})
-            with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', side_effect=template), \
-                 patch('sentinel_x.runtime.urllib.request.urlopen', return_value=wire(*deltas)):
-                report = check_mode(self.service, enabled, 5)
-            self.assertTrue(report['passed'], report)
-            self.assertEqual(report['thinking_observed'], enabled)
-            self.assertNotIn('diagnostic reasoning', json.dumps(report))
 
-    def test_live_check_is_inconclusive_when_on_emits_no_thinking(self):
-        with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', side_effect=[
-                {'prompt': 'on'}, {'prompt': 'off'}, {'tokens': [1]}]), \
-             patch('sentinel_x.runtime.urllib.request.urlopen', return_value=wire(
-                 {'content': '{"summary":"2/5","claims":[]}'})):
-            report = check_mode(self.service, True, 5)
-        self.assertTrue(report['inconclusive'])
-        self.assertFalse(report['passed'])
 
-    def test_live_check_fails_if_the_runtime_ignores_off(self):
-        with patch.object(self.runtime, 'start'), patch.object(self.runtime, 'call', side_effect=[
-                {'prompt': 'off'}, {'tokens': [1]}]), \
-             patch('sentinel_x.runtime.urllib.request.urlopen', return_value=wire(
-                 {'reasoning_content': 'Unexpected reasoning'})):
-            report = check_mode(self.service, False, 5)
-        self.assertFalse(report['passed'])
-        self.assertIn('Thinking Off', report['detail'])
 
 
 if __name__ == '__main__': unittest.main()

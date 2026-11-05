@@ -12,7 +12,7 @@ from sentinel_x.state import Store
 manifest = json.loads((root/'src/backend/sentinel_x/assets/runtime-manifest.json').read_text())
 with tempfile.TemporaryDirectory() as temporary:
     models = Models(Store(Path(temporary)), manifest)
-    for key in ('qwen', 'embedding'):
+    for key in ('qwen', 'scope', 'embedding'):
         catalog = models.catalog(key)
         manifest[key]['revision'] = catalog['revision']
         manifest[key]['artifacts'] = catalog['files']

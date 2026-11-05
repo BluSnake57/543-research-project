@@ -177,6 +177,11 @@ def render_conversation(store, ident):
             else:
                 lines += ['Not recorded for this historical turn. The current prompt is not substituted for an unknown historical prompt.', '']
         elif role == 'assistant':
+            if data.get('scope'):
+                from .scope import explanation_text
+                lines += ['#### Explanation · Scope', '', quote(explanation_text(data['scope'])), '',
+                          'Versioned sparse measurements (including model revisions and token positions):',
+                          '', block(json.dumps(data['scope'], ensure_ascii=False, indent=2)), '']
             if data.get('thinking_trace'):
                 lines += ['#### Local model thinking trace', '', quote(data['thinking_trace']), '']
                 if data.get('thinking_trace_truncated'):

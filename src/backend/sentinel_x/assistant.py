@@ -1085,7 +1085,7 @@ POST:
                 text[:6000],
         })
 
-        executable, model = (
+        model, sae = (
             self.runtime.configured()
             if hasattr(
                 self.runtime,
@@ -1153,7 +1153,9 @@ POST:
                 model,
 
             'runtime_path':
-                executable,
+                'Transformers Scope worker',
+
+            'sae_path': sae,
 
             'selected_checkpoint':
                 self.store.setting(
@@ -1162,7 +1164,7 @@ POST:
 
             'generation': {
                 'temperature':
-                    .2,
+                    0,
 
                 'max_output_tokens':
                     1600,
@@ -1371,6 +1373,7 @@ POST:
 
             if isinstance(getattr(job, 'data', None), dict):
                 data['thinking_seconds'] = job.data.get('thinking_seconds', 0)
+                data['scope'] = job.data.get('scope', [])
 
             self.store.message(
                 conversation,
@@ -1512,6 +1515,7 @@ POST:
                             True
                         )
 
+                        job.scope_call_kind = 'formatting'
                         try:
                             repaired = (
                                 self.runtime.stream(
@@ -1549,6 +1553,7 @@ POST:
                                 )
 
                         finally:
+                            job.scope_call_kind = 'response'
                             job.thinking_enabled = (
                                 previous_thinking
                             )
@@ -1612,6 +1617,7 @@ POST:
                         .thinking_trace_truncated
                     )
 
+                data['scope'] = getattr(job, 'data', {}).get('scope', [])
                 self.store.message(
                     conversation,
                     'assistant',

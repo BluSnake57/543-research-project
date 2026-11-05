@@ -16,7 +16,6 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from sentinel_x.desktop import Window
 from sentinel_x.exporting import render_conversation
-from sentinel_x.runtime import Llama
 from sentinel_x.service import Service
 from sentinel_x.state import Store
 
@@ -136,114 +135,6 @@ class EditingTests(unittest.TestCase):
         self.assertEqual(stages, ['Queued', 'Retrieving evidence', 'Searching evidence',
                                   'Checking response and citations'])
         self.assertEqual(job['status'], 'completed')
-
-
-class RuntimeTests(unittest.TestCase):
-    def test_nonblocking_stop_reaps_only_the_captured_runtime(self):
-        with tempfile.TemporaryDirectory() as folder:
-            runtime = Llama(Store(Path(folder)))
-            old_process = Mock(); old_process.poll.return_value = None
-            old_log = Mock(); runtime.process = old_process; runtime.log = old_log
-            waiting = threading.Event(); release = threading.Event(); closed = threading.Event()
-            def wait(timeout):
-                waiting.set(); release.wait(3)
-            old_process.wait.side_effect = wait
-            old_log.close.side_effect = closed.set
-            try:
-                runtime.stop(wait=False)
-                self.assertTrue(waiting.wait(2))
-                self.assertIsNone(runtime.process)
-                new_process = Mock(); new_log = Mock()
-                runtime.process = new_process; runtime.log = new_log
-                release.set(); self.assertTrue(closed.wait(2))
-                new_process.terminate.assert_not_called(); new_log.close.assert_not_called()
-                self.assertIs(runtime.process, new_process)
-            finally: release.set()
-
-    def test_cold_start_cpu_fallback_and_warm_start(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder); store = Store(root)
-            binary = root/'llama-server'; binary.touch()
-            model = root/'model.gguf'; model.touch()
-            store.configure('llama_path', str(binary)); store.configure('qwen_path', str(model))
-            runtime = Llama(store); events = []
-            job = Mock(); job.emit.side_effect = lambda event, **data: events.append((event, data))
-            failed = Mock(); failed.poll.return_value = 1
-            ready = Mock(); ready.poll.return_value = None
-            with patch('sentinel_x.runtime.socket.socket') as socket_class, \
-                 patch.object(runtime, 'select_acceleration', return_value='auto'), \
-                 patch('sentinel_x.runtime.subprocess.Popen', side_effect=[failed, ready]) as spawn, \
-                 patch.object(runtime, 'call', return_value={'status': 'ok'}):
-                socket_class.return_value.__enter__.return_value.getsockname.return_value = ('127.0.0.1', 1234)
-                runtime.start(job)
-                self.assertEqual(spawn.call_count, 2)
-                self.assertIn('Acceleration/startup failed', str(events))
-                self.assertIn('Loading model', str(events))
-                self.assertIn('--reasoning-format', spawn.call_args.args[0])
-                args = spawn.call_args.args[0]
-                self.assertEqual(args[args.index('--reasoning-budget')+1], '256')
-                self.assertEqual(args[args.index('--device')+1], 'none')
-                previous = len(events); runtime.start(job)
-                self.assertEqual(spawn.call_count, 2)
-                self.assertEqual(len(events), previous)
-            runtime.stop()
-
-    def test_thinking_templates_payload_and_reasoning_is_not_saved(self):
-        for enabled in (False, True):
-            with self.subTest(thinking=enabled), tempfile.TemporaryDirectory() as folder:
-                store = Store(Path(folder)); runtime = Llama(store); runtime.port = 1234
-                class Job:
-                    thinking_enabled = enabled
-                    def __init__(self): self.events = []
-                    def emit(self, event, **data): self.events.append({'event': event, **data})
-                    def check(self): pass
-                job = Job(); calls = []
-                def call(path, payload):
-                    calls.append((path, payload))
-                    if path == '/tokenize': return {'tokens': [1]}
-                    return {'prompt': 'thinking' if payload['chat_template_kwargs']['enable_thinking'] else 'direct'}
-                data = [
-                    {'choices': [{'delta': {'content': '{"summary":"ok","claims":[]}'}}]},
-                    {'choices': [{'delta': {}, 'finish_reason': 'stop'}]},
-                ]
-                if enabled:
-                    data.insert(0, {'choices': [{'delta': {'reasoning_content': 'private reasoning'}}]})
-                wire = ''.join('data: '+json.dumps(item)+'\n\n' for item in data)+'data: [DONE]\n'
-                with patch.object(runtime, 'start'), patch.object(runtime, 'call', side_effect=call), \
-                     patch('sentinel_x.runtime.urllib.request.urlopen', return_value=io.BytesIO(wire.encode())) as opened:
-                    answer = runtime.stream([{'role': 'user', 'content': 'hi'}], [], job)
-                payload = json.loads(opened.call_args.args[0].data)
-                self.assertEqual(payload['chat_template_kwargs']['enable_thinking'], enabled)
-                self.assertEqual(payload['reasoning_budget_tokens'], 256 if enabled else 0)
-                self.assertEqual(payload['reasoning_format'], 'deepseek')
-                self.assertEqual(calls[0][1]['chat_template_kwargs']['enable_thinking'], enabled)
-                self.assertEqual('Thinking' in [e.get('stage') for e in job.events], enabled)
-                self.assertNotIn('private reasoning', json.dumps(job.events)+json.dumps(answer))
-
-    def test_unsupported_thinking_and_context_limits(self):
-        with tempfile.TemporaryDirectory() as folder:
-            runtime = Llama(Store(Path(folder)))
-            class Job:
-                thinking_enabled = True
-                def emit(self, *args, **kwargs): pass
-            with patch.object(runtime, 'start'), patch.object(runtime, 'call', return_value={'prompt': 'same'}):
-                with self.assertRaisesRegex(ValueError, 'does not support'):
-                    runtime.stream([], [], Job())
-            Job.thinking_enabled = False
-            with patch.object(runtime, 'start'), patch.object(runtime, 'call', side_effect=[{'prompt': 'p'}, {'tokens': [1]*9000}]):
-                with self.assertRaisesRegex(ValueError, 'context'):
-                    runtime.stream([], [], Job())
-
-    def test_thinking_output_limit_is_actionable(self):
-        with tempfile.TemporaryDirectory() as folder:
-            runtime = Llama(Store(Path(folder))); runtime.port = 1234
-            job = Mock(); job.thinking_enabled = True
-            wire = b'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\ndata: [DONE]\n'
-            with patch.object(runtime, 'start'), patch.object(runtime, 'call', side_effect=[
-                    {'prompt': 'thinking'}, {'prompt': 'direct'}, {'tokens': [1]}]), \
-                 patch('sentinel_x.runtime.urllib.request.urlopen', return_value=io.BytesIO(wire)):
-                with self.assertRaisesRegex(ValueError, 'Thinking Off'):
-                    runtime.stream([], [], job)
 
 
 class DesktopUsabilityTests(unittest.TestCase):
