@@ -59,3 +59,28 @@ linear layer executed on CPU. Neither complete 9B nor complete 2B loading and
 inference has been measured against the memory targets. CUDA validation remains
 blocked by driver access. The earlier frozen startup check failed on a PyTorch
 shared-library dependency; release packaging remains unfinished.
+
+## Readable activity view
+
+The expanded Scope panel now defaults to answer text from the latest response
+or formatting step. It shows up to eight activation peaks as clickable excerpts
+with nearby text, suppressing overlapping excerpts. These are measured peaks,
+not importance, confidence, or causal rankings. Answer, Thinking, and Prompt
+views are independent of the Thinking trace dropdown. Model-step links separate
+auxiliary calls from response calls. Whitespace, punctuation-only text pieces
+and control markers are hidden by default; Include formatting tokens restores
+them for inspection. Structured answer text may still contain JSON field names.
+
+Select an excerpt to inspect its saved text piece. Technical details is collapsed
+by default and shows the strongest 20 features for the current view or selected
+piece, along with provenance and failure details. Feature meanings are explicitly
+unestablished; the UI supplies no invented descriptions. Evidence and research
+details are linked separately when present. Missing and partial captures are
+labeled; empty views are never interpreted as absence of a feature.
+
+Selections and expansion states survive transcript refreshes in the current
+window. Edited answers show the original-analysis notice. This is a presentation
+change only: all original sparse records remain intact, including hidden tokens,
+and Markdown export retains its complete measurement records.
+
+![Scope view using explicitly labeled demonstration data](screenshots/scope-readable.png)

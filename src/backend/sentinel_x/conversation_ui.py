@@ -147,20 +147,13 @@ def thinking_dropdown(key, label, text, expanded, truncated=False):
     return result
 
 
-def scope_dropdown(key, records, expanded, edited=False):
-    from .scope import explanation_text
-    statuses = ', '.join(dict.fromkeys(r['status'] for r in records))
-    label = 'Explanation · Scope · ' + statuses
-    arrow = '▾' if expanded else '▸'
-    result = f'<p><a href="scope:{key}">{arrow} {escape(label)}</a></p>'
-    if edited:
-        result += '<p><i>Scope analysis belongs to the original response.</i></p>'
-    if expanded:
-        result += '<pre>' + escape(explanation_text(records)) + '</pre>'
-    return result
+def scope_dropdown(key, records, expanded, edited=False, state=None, evidence=False):
+    from .scope_ui import render_scope
+    return render_scope(key, records, expanded, edited, state, evidence)
 
 
-def transcript_html(messages, preview=None, thinking_expanded=None, scope_expanded=None):
+def transcript_html(messages, preview=None, thinking_expanded=None, scope_expanded=None, scope_views=None):
+    scope_views = scope_views or {}
     scope_expanded = scope_expanded or {}
     thinking_expanded = thinking_expanded or {}
     if not messages:
@@ -196,7 +189,8 @@ def transcript_html(messages, preview=None, thinking_expanded=None, scope_expand
             pieces.append('<p><i>Thinking was enabled; the model did not emit a separate thinking trace.</i></p>')
         if data.get('scope'):
             pieces.append(scope_dropdown(str(ident), data['scope'],
-                                         scope_expanded.get(str(ident), False), bool(data.get('revision'))))
+                                         scope_expanded.get(str(ident), False), bool(data.get('revision')),
+                                         scope_views.get(str(ident)), bool(data.get('evidence') or data.get('tools'))))
         if data.get('revision') and message['role'] == 'assistant':
             pieces.append('<p><i>Edited answer. Assessments and evidence below belong '
                           'to the original generated response.</i></p>')
@@ -224,7 +218,7 @@ def transcript_html(messages, preview=None, thinking_expanded=None, scope_expand
         pieces.append('<hr>')
     if preview and preview.get('scope'):
         key = preview.get('key', 'live')
-        pieces.append(scope_dropdown(key, preview['scope'], scope_expanded.get(key, False)))
+        pieces.append(scope_dropdown(key, preview['scope'], scope_expanded.get(key, False), state=scope_views.get(key)))
     if preview and preview.get('active'):
         key = preview.get('key', 'live')
         pieces.append(thinking_dropdown(key, 'Thinking · '+duration(preview['seconds']),

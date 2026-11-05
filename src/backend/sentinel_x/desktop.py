@@ -34,6 +34,7 @@ class Window(CheckpointControls, QMainWindow):
         self.rendered_conversation = None; self.rendered_signature = None
         self.thinking_expanded = {}
         self.scope_expanded = {}
+        self.scope_views = {}
         self.loading_draft = False; self.import_feedback = {}
         self.setWindowTitle('Sentinel-X · Evidence & propagation'); self.resize(1320, 900)
         self.setMinimumSize(900, 650)
@@ -300,14 +301,14 @@ class Window(CheckpointControls, QMainWindow):
         preview = live_job.preview() if live_job and live_job.data['status'] != 'completed' else None
         if preview:
             preview['key'] = 'live-'+live_job.data['id']
-        signature = repr((messages, preview, self.thinking_expanded, self.scope_expanded))
+        signature = repr((messages, preview, self.thinking_expanded, self.scope_expanded, self.scope_views))
         changed_conversation = self.rendered_conversation != self.conversation
         if signature == self.rendered_signature and not changed_conversation:
             return
         scroll = self.transcript.verticalScrollBar()
         old = scroll.value()
         follow = changed_conversation or scroll.maximum()-old < 35
-        self.transcript.setHtml(transcript_html(messages, preview, self.thinking_expanded, self.scope_expanded))
+        self.transcript.setHtml(transcript_html(messages, preview, self.thinking_expanded, self.scope_expanded, self.scope_views))
         scroll.setValue(scroll.maximum() if follow else old)
         self.rendered_signature = signature
         self.rendered_conversation = self.conversation
@@ -322,6 +323,20 @@ class Window(CheckpointControls, QMainWindow):
         if action == 'action':
             if value == 'import': self.import_posts()
             elif value == 'evidence': self.navigation.setCurrentRow(1)
+            return
+        if action == 'scopeview':
+            key, control, choice = value.split(':', 2)
+            view = self.scope_views.setdefault(key, {})
+            if control == 'phase' and choice in ('answer', 'thinking', 'prompt'):
+                view['phase'] = choice
+                view.pop('token', None)
+            elif control in ('formatting', 'technical'):
+                view[control] = not view.get(control, False)
+                if control == 'formatting': view.pop('token', None)
+            elif control in ('call', 'token') and choice.isdigit():
+                view[control] = int(choice)
+                if control == 'call': view.pop('token', None)
+            self.render_messages()
             return
         if action == 'scope':
             self.scope_expanded[value] = not self.scope_expanded.get(value, False)
