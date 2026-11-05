@@ -43,7 +43,8 @@ build/
 resources/*
 !resources/.gitkeep
 /models/
-/datasets/
+/datasets/*
+!/datasets/twitter16-model-cases/
 /index/
 /runtime/
 /graphs/

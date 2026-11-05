@@ -1,0 +1,13 @@
+{
+  "source_id": "643103859729166337",
+  "original_rumor_label": "false",
+  "final_recorded_nodes": 564,
+  "observed_nodes_60min": 135,
+  "viral_target_464": true,
+  "viral_target_475": true,
+  "expected_probability": null,
+  "expected_factual_verdict": "Human-adjudicated from the fixed evidence pack; never infer from rumor label alone",
+  "semantic_reference": "Two reviewers independently annotate framing and emotional-language intensity from the source text before seeing outputs",
+  "focus": "Early spread assessment",
+  "training_overlap_check": "Excluded literal source IDs in shipped train/validation lists; cross-dataset semantic duplicates still require review"
+}
