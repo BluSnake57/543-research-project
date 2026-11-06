@@ -207,6 +207,8 @@ class Engine:
         import torch
 
         execution_device = tensor_device(self.device)
+        if self.device in ("cuda", "rocm"):
+            torch.cuda.reset_peak_memory_stats()
         thinking = request["thinking"]
         # The pinned template expects argument mappings, while the app stores JSON strings.
         messages = json.loads(json.dumps(request["messages"]))
@@ -224,7 +226,10 @@ class Engine:
         )
         ids = self.tokenizer(template, add_special_tokens=False, return_tensors="pt")["input_ids"]
         prompt_ids = ids[0].tolist()
-        if len(prompt_ids) + request["max_tokens"] > self.config["context"]:
+        # Reserve answer space independently; increasing thinking must not squeeze JSON.
+        thinking_allowance = self.config["thinking_budget"] + 1 if thinking else 0
+        generation_limit = request["max_tokens"] + thinking_allowance
+        if len(prompt_ids) + generation_limit > self.config["context"]:
             raise ValueError(
                 "Request exceeds context; reduce attachments or increase context in Models"
             )
@@ -233,6 +238,8 @@ class Engine:
             quantization="bitsandbytes NF4 double quantization",
             device=self.device,
             cpu_offload=self.config.get("offload", "none"),
+            answer_token_budget=request["max_tokens"],
+            thinking_token_budget=thinking_allowance,
         )
         send({"event": "scope", "record": capture.record})
         hook = self.layer.register_forward_hook(capture.hook)
@@ -275,7 +282,7 @@ class Engine:
                             "total": prompt_length,
                         }
                     )
-                for step in range(request["max_tokens"] + 1):
+                for step in range(generation_limit + 1):
                     if cancelled.is_set():
                         capture.finish("cancelled")
                         send({"event": "scope", "record": capture.record})
@@ -290,7 +297,11 @@ class Engine:
                         cache = result.past_key_values
                     # Process the final emitted token once in the same cached execution so
                     # every displayed token has its own residual, not its predecessor's.
-                    if step == request["max_tokens"] or (generated and generated[-1] in end_ids):
+                    if (
+                        step == generation_limit
+                        or len(answer_ids) >= request["max_tokens"]
+                        or (generated and generated[-1] in end_ids)
+                    ):
                         break
                     token = int(result.logits[0, -1].argmax().item())
                     if phase == "thinking" and len(thinking_ids) >= self.config["thinking_budget"]:
@@ -345,6 +356,11 @@ class Engine:
                 )
                 if capture.record["output_truncated"]:
                     capture.record["truncated"] = True
+                if self.device in ("cuda", "rocm"):
+                    capture.record.update(
+                        peak_gpu_allocated_bytes=torch.cuda.max_memory_allocated(),
+                        peak_gpu_reserved_bytes=torch.cuda.max_memory_reserved(),
+                    )
                 record = capture.finish()
                 send({"event": "scope", "record": record})
                 answer = parse_output(capture.record["output_text"], request["tools"])

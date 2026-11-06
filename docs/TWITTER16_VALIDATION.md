@@ -191,3 +191,17 @@ follow-up separately. The revision followed inspection of a pilot failure; freez
 it before a new run rather than treating earlier and revised outputs as one fixed
 protocol. [The pilot review](CASE01_REVIEW.md) distinguishes reporting omissions
 from an actual false-negative prediction. Keep that review out of model context.
+
+
+## Independent audit and FEVER-only evaluation
+
+The [research data audit](research/data-audit/audit.md) verifies original hashes,
+case text/trees/annotations, normalized counts and observation boundaries. It
+found an exact normalized-text training/validation overlap in Case 12 and a
+near match in Case 03. Both are excluded from overlap-screened metrics; preserve
+them as development cases. Literal source-ID exclusion alone was insufficient.
+
+The [research workflow](research/README.md) uses only a frozen FEVER candidate
+subset for factual evidence. No externally researched articles enter inference.
+Case-specific human relevance and factual annotations remain required; a citation
+ID or rumor label does not establish factual support.

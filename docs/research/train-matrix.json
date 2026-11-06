@@ -1,0 +1,5 @@
+{
+  "dataset": ".cache/research/twitter15",
+  "feature_cache": ".cache/research/twitter15-features/features.json",
+  "device": "cuda"
+}

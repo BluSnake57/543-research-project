@@ -1,0 +1,10 @@
+{
+  "dataset": ".cache/research/twitter16",
+  "model_data": "~/.local/share/sentinel-x",
+  "checkpoint": "model weights/fe44637dfc4d49fe9cd402c4ce6cc21d.json",
+  "budget": 256,
+  "features": [
+    "emotional_language"
+  ],
+  "timeout_seconds": 1200
+}

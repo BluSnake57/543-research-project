@@ -189,6 +189,14 @@ class WorkerGenerationTests(unittest.TestCase):
             "".join(e["text"] for e in events if e["event"] == "piece" and e["reasoning"]), "reason"
         )
 
+    def test_thinking_does_not_consume_answer_allowance(self):
+        _, events = self.generate([3, 3, 3, 8, 5, 12], thinking=True, max_tokens=2)
+        self.assertEqual(json.loads(events[-1]['message']['content']), {'score': 0.95})
+        record = [e['record'] for e in events if e['event']=='scope'][-1]
+        self.assertFalse(record['output_truncated'])
+        self.assertEqual(record['answer_token_budget'], 2)
+        self.assertGreater(record['generated_tokens'], 2)
+
     def test_literal_control_token_text_inside_json_is_not_removed(self):
         _, events = self.generate([14, 12, 9])
         self.assertEqual(json.loads(events[-1]["message"]["content"]), {"text": "<|im_end|>"})
@@ -259,10 +267,15 @@ class WorkerGenerationTests(unittest.TestCase):
                 args = ("cpu", *args[1:])
             return original_to(value, *args, **kwargs)
 
-        with patch("torch.tensor", side_effect=tensor), patch.object(torch.Tensor, "to", move):
+        with (patch("torch.tensor", side_effect=tensor), patch.object(torch.Tensor, "to", move),
+              patch("torch.cuda.reset_peak_memory_stats"),
+              patch("torch.cuda.max_memory_allocated", return_value=123),
+              patch("torch.cuda.max_memory_reserved", return_value=456)):
             _, events = self.generate([4, 9], device="rocm")
         record = [e["record"] for e in events if e["event"] == "scope"][-1]
         self.assertEqual(record["device"], "rocm")
+        self.assertEqual(record["peak_gpu_allocated_bytes"], 123)
+        self.assertEqual(record["peak_gpu_reserved_bytes"], 456)
         self.assertEqual(record["status"], "complete")
         self.assertGreaterEqual(len(requested), 2)
         self.assertEqual(events[-1]["message"]["content"], "answer")

@@ -113,6 +113,9 @@ def main():
         ),
     )
 
+    train.add_argument('--hidden', type=int, choices=(32, 64, 128), default=32)
+    train.add_argument('--split-seed', type=int, default=42)
+
     predict = sub.add_parser(
         'predict'
     )
@@ -271,6 +274,8 @@ def main():
             'window':
                 args.window,
 
+            'hidden': args.hidden,
+            'split_seed': args.split_seed,
             'epochs':
                 args.epochs,
 

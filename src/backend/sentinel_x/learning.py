@@ -9,6 +9,7 @@ import uuid
 
 import numpy as np
 
+from .semantic import feature_cache_protocol
 from .graphs import FEATURE_VERSION, fingerprint, node_features, observed_prefix
 
 
@@ -183,6 +184,14 @@ def scores(labels, probabilities, cutoff=.5):
             )
         ),
         'pr_auc': ap,
+        'brier': float(np.mean((p-y)**2)) if len(y) else None,
+        'reliability': [
+            {'lower': i/10, 'upper': (i+1)/10, 'count': int(mask.sum()),
+             'mean_probability': float(p[mask].mean()) if mask.any() else None,
+             'observed_frequency': float(y[mask].mean()) if mask.any() else None}
+            for i in range(10)
+            for mask in [(p >= i/10) & ((p < (i+1)/10) if i < 9 else (p <= 1))]
+        ],
         'accuracy': (
             (tp + tn)
             / max(len(y), 1)
@@ -804,7 +813,7 @@ def train(
     splits = split_graphs(
         graphs,
         config['threshold'],
-        config['seed'],
+        config.get('split_seed', config['seed']),
     )
 
     torch, model_class = (
@@ -1325,6 +1334,7 @@ def train(
         )
 
     metadata = {
+        'feature_protocol': feature_cache_protocol(config['llm_features']) if use_llm else None,
         'id': ident,
 
         'feature_version':
@@ -1523,6 +1533,13 @@ def predict(
 
     model.eval()
 
+    compatibility = []
+    if use_llm:
+        incoming = feature_cache_protocol(source)
+        if metadata.get('feature_protocol') is None or incoming is None:
+            compatibility.append('Semantic extraction provenance is unknown for a legacy cache/checkpoint; compatibility is unverified.')
+        elif incoming != metadata['feature_protocol']:
+            compatibility.append('Semantic extraction protocol differs from checkpoint training; treat this run as exploratory.')
     outputs = []
 
     with torch.no_grad():
@@ -1644,7 +1661,7 @@ def predict(
                     graph.get(
                         'warnings',
                         [],
-                    ),
+                    ) + compatibility,
 
                 'provenance': {
                     'source':

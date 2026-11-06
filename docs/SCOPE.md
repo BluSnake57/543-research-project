@@ -127,3 +127,10 @@ source text and computed early-window results, excluding final cascade size,
 rumor labels and later post previews. Thinking defaults On in Settings → Models.
 See [Case 01 pilot review](CASE01_REVIEW.md) for the measured false negative,
 missing report content, prompt revision and limits on research claims.
+
+
+Generation now reserves the configured Thinking allowance separately from the
+answer allowance. Raising Thinking no longer reduces final-answer space. Scope
+records retain both budgets and GPU allocation/reservation peaks on CUDA/ROCm.
+The [research workflow](research/README.md) versions this change and preserves
+earlier failed pilot attempts.

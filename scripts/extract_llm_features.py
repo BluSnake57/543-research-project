@@ -7,19 +7,14 @@ import time
 from sentinel_x.service import Service
 
 
-FEATURES = (
-    "urgency",
-    "sensationalism",
-    "emotional_language",
-    "authority_framing",
-    "conspiracy_framing",
-)
+from sentinel_x.semantic import FEATURES, build_prompt, validate_features, protocol, cache_compatible
+import hashlib
 
 
 class SimpleJob:
     """Minimal job interface required by ScopeRuntime.structured()."""
 
-    thinking_enabled = False
+    thinking_enabled = True
 
     def __init__(self):
         self.data = {}
@@ -47,82 +42,6 @@ def load_source_tweets(dataset_dir):
                 tweets[tweet_id] = text
 
     return tweets
-
-
-def build_prompt(text):
-    return f"""
-Analyze the social-media post below.
-
-Return ONLY a JSON object containing exactly these five numerical fields:
-
-{{
-  "urgency": 0.0,
-  "sensationalism": 0.0,
-  "emotional_language": 0.0,
-  "authority_framing": 0.0,
-  "conspiracy_framing": 0.0
-}}
-
-Every value must be a number from 0.0 to 1.0.
-
-Definitions:
-
-urgency:
-Pressure to react, share, click, believe, or act immediately.
-
-sensationalism:
-Exaggerated, shocking, dramatic, provocative, or attention-grabbing presentation.
-
-emotional_language:
-Use of wording intended to trigger strong emotions such as fear, anger,
-outrage, excitement, or sympathy.
-
-authority_framing:
-Reliance on experts, officials, institutions, celebrities, scientists,
-government figures, or other authority figures to strengthen the message.
-
-conspiracy_framing:
-Suggestions of secrecy, suppression, cover-ups, hidden actors,
-coordinated deception, or information being deliberately concealed.
-
-Do not determine whether the post is true or false.
-Do not retrieve evidence.
-Do not explain your answer.
-Return only the five numerical fields.
-
-POST:
-{text}
-""".strip()
-
-
-def validate_features(result):
-    if not isinstance(result, dict):
-        raise ValueError("Qwen response is not a JSON object")
-
-    output = {}
-
-    for feature in FEATURES:
-        if feature not in result:
-            raise ValueError(f"Missing feature: {feature}")
-
-        value = result[feature]
-
-        if isinstance(value, bool):
-            raise ValueError(f"{feature} must be numeric")
-
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            raise ValueError(f"{feature} is not numeric")
-
-        if not 0.0 <= value <= 1.0:
-            raise ValueError(
-                f"{feature} must be between 0.0 and 1.0"
-            )
-
-        output[feature] = value
-
-    return output
 
 
 def save_results(path, results):
@@ -184,6 +103,10 @@ def main():
         results = {}
 
     service = Service()
+    expected = protocol(service.store, FEATURES, True)
+    if any(not cache_compatible(record, tweets.get(key, ''), expected) for key, record in results.items()):
+        service.close()
+        raise ValueError('Legacy or incompatible feature cache: choose a new output file; the original is preserved')
     job = SimpleJob()
 
     print(f"Dataset: {dataset_dir}")
@@ -228,6 +151,8 @@ def main():
 
                     results[tweet_id] = {
                         "text": text,
+                        "protocol": expected,
+                        "source_sha256": hashlib.sha256(text.encode()).hexdigest(),
                         "features": features,
                         "scope": job.data.get("scope", []),
                     }

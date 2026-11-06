@@ -1,9 +1,11 @@
+import hashlib
 import json
 from pathlib import Path
 import tempfile
 import uuid
 
 from . import learning
+from .semantic import SEMANTIC_DEFINITIONS, build_prompt, validate_features, protocol
 from .prediction_reporting import INTERPRETATION, prediction_context, prediction_report, scope_report
 
 
@@ -58,35 +60,6 @@ def is_virality_request(text):
     return any(term in value for term in VIRALITY_TERMS)
 
 
-SEMANTIC_DEFINITIONS = {
-    'urgency': (
-        'Pressure to react, share, click, believe, '
-        'or act immediately.'
-    ),
-
-    'sensationalism': (
-        'Exaggerated, shocking, dramatic, provocative, '
-        'or attention-grabbing presentation.'
-    ),
-
-    'emotional_language': (
-        'Emotionally charged wording intended to trigger '
-        'fear, anger, outrage, excitement, sympathy, '
-        'or another strong emotional reaction.'
-    ),
-
-    'authority_framing': (
-        'Reliance on experts, officials, institutions, '
-        'celebrities, scientists, governments, or other '
-        'authority figures to strengthen the message.'
-    ),
-
-    'conspiracy_framing': (
-        'Suggestions of secrecy, suppression, cover-ups, '
-        'hidden actors, coordinated deception, or '
-        'deliberately concealed information.'
-    ),
-}
 
 
 class AnswerFormatError(ValueError):
@@ -401,49 +374,7 @@ class Assistant:
                 + ', '.join(unknown)
             )
 
-        requested = '\n'.join(
-            f'- {name}'
-            for name in feature_names
-        )
-
-        template = ',\n'.join(
-            f'  "{name}": 0.0'
-            for name in feature_names
-        )
-
-        definitions = '\n\n'.join(
-            f'{name}:\n'
-            f'{SEMANTIC_DEFINITIONS[name]}'
-            for name in feature_names
-        )
-
-        prompt = f"""
-Analyze the social-media post below.
-
-Return ONLY a JSON object containing exactly
-these numerical semantic features:
-
-{requested}
-
-Required JSON format:
-{{
-{template}
-}}
-
-Every value must be between 0.0 and 1.0.
-
-Feature definitions:
-
-{definitions}
-
-Do not determine whether the post is true or false.
-Do not retrieve evidence.
-Do not explain the scores.
-Return only the requested JSON object.
-
-POST:
-{source_text}
-""".strip()
+        prompt = build_prompt(source_text, feature_names)
 
         if hasattr(
             job,
@@ -459,62 +390,11 @@ POST:
             job,
         )
 
-        if not isinstance(
-            semantic,
-            dict,
-        ):
-            raise ValueError(
-                'Qwen returned an invalid semantic '
-                'feature object'
-            )
-
-        validated = {}
-
-        for feature in feature_names:
-            if feature not in semantic:
-                raise ValueError(
-                    f'Qwen omitted required feature: '
-                    f'{feature}'
-                )
-
-            value = semantic[
-                feature
-            ]
-
-            if isinstance(
-                value,
-                bool,
-            ):
-                raise ValueError(
-                    f'Qwen returned a nonnumeric value '
-                    f'for {feature}'
-                )
-
-            try:
-                value = float(value)
-
-            except (
-                TypeError,
-                ValueError,
-            ) as exc:
-                raise ValueError(
-                    f'Qwen returned a nonnumeric value '
-                    f'for {feature}'
-                ) from exc
-
-            if not 0.0 <= value <= 1.0:
-                raise ValueError(
-                    f'Qwen returned {feature} outside '
-                    '[0,1]'
-                )
-
-            validated[
-                feature
-            ] = value
-
         return {
             'text': source_text,
-            'features': validated,
+            'features': validate_features(semantic, feature_names),
+            'source_sha256': hashlib.sha256(source_text.encode()).hexdigest(),
+            'protocol': protocol(self.store, feature_names, job.thinking_enabled),
         }
 
     def _predict_graphsage(

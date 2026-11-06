@@ -651,3 +651,20 @@ app, choose **Import posts → Twitter15 / Twitter16 input folder…**, select a
 case's `input/` folder, and wait for its cascade to be attached to the conversation.
 The Trainer is not required. When prepared locally, the larger Twitter16 corpus
 under `datasets/twitter16-suite/` supports aggregate scoring.
+
+
+## Reproducible research evaluation
+
+See [the research workflow](docs/research/README.md) for independent case-data
+validation, FEVER-only evidence packs, shared semantic extraction, resumable GPU
+pilots, reviewer forms, and GraphSAGE capacity comparisons. The audit found an
+exact training/validation text overlap in Case 12 and a near match in Case 03;
+these cases remain development examples and are excluded from overlap-screened
+prediction metrics. Human evidence judgments remain separate from rumor labels.
+
+Verified development checks:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
+.venv/bin/ruff check src/backend scripts tests
+```

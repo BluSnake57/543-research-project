@@ -1,0 +1,20 @@
+{
+  "cases": "datasets/twitter16-model-cases",
+  "sources": ".cache/research/sources",
+  "checkpoint": "model weights/fe44637dfc4d49fe9cd402c4ce6cc21d.json",
+  "model_data": "/home/blusnake/.local/share/sentinel-x",
+  "evidence_pack": "docs/research/fever-v1/pack.json",
+  "case_names": [
+    "case-01",
+    "case-02",
+    "case-03"
+  ],
+  "budgets": [
+    256,
+    512,
+    1024
+  ],
+  "timeout_seconds": 1200,
+  "purpose": "development pilot; not a held-out quality claim",
+  "source_lock": "docs/research/sources.json"
+}
