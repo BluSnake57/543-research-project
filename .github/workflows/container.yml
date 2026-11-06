@@ -47,6 +47,8 @@ jobs:
           docker compose exec -T desktop python /opt/container/check_runtime.py --variant "$VARIANT"
       - name: Check desktop, downloads, and protections
         run: docker compose exec -T desktop python /opt/container/smoke_test.py
+      - name: Stress long-running download progress UI
+        run: docker compose exec -T -e QT_QPA_PLATFORM=offscreen desktop python /opt/container/check_qt.py
       - name: Confirm settings, model storage, and exports survive recreation
         env:
           VARIANT: ${{ matrix.variant }}

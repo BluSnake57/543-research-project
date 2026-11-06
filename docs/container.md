@@ -338,6 +338,14 @@ pair; local model weights, secrets, datasets, caches, and build outputs are excl
 
 ## Checks and validation status
 
+The image pins matched PySide6/Shiboken 6.11.1 bindings. Version 6.12.0 caused
+`none_dealloc: deallocating None` aborts on Python 3.11 during repeated progress
+updates, stopping in-process downloads. Rebuild the image to apply the corrected
+pins; recreating an old image alone does not update its Python packages. Retained
+partial downloads can be resumed using **Retry / resume task** in Background work.
+CI runs `/opt/container/check_qt.py` for 5,000 progress refreshes to catch this
+native crash before dependency upgrades are accepted.
+
 Routine operation (include the same variant files used at launch):
 
 ```sh

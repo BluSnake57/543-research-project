@@ -1,5 +1,7 @@
 # Shared constraints for the CUDA and CPU container builds; CI checks both variants.
 # torch uses the index selected by TORCH_INDEX_URL.
+# Keep Qt bindings paired: 6.12.0 loses None references on Python 3.11 during
+# widget updates. Run docker/check_qt.py before updating these pins.
 accelerate==1.14.0
 annotated-doc==0.0.5
 anyio==4.16.0
@@ -41,7 +43,7 @@ nvidia-nvtx-cu12==12.8.90
 packaging==26.3
 psutil==7.2.2
 Pygments==2.21.0
-PySide6_Essentials==6.12.0
+PySide6_Essentials==6.11.1
 PyYAML==6.0.3
 regex==2026.9.29
 rich==15.0.0
@@ -50,7 +52,7 @@ scikit-learn==1.9.1
 scipy==1.17.1
 sentence-transformers==5.7.0
 shellingham==1.5.4
-shiboken6==6.12.0
+shiboken6==6.11.1
 sympy==1.14.0
 threadpoolctl==3.7.0
 tokenizers==0.23.3

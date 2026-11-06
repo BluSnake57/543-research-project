@@ -77,6 +77,8 @@ def main():
         "accelerate": "1.14.0",
         "safetensors": "0.8.0",
         "psutil": "7.2.2",
+        "PySide6-Essentials": "6.11.1",
+        "shiboken6": "6.11.1",
     }.items():
         assert version(name).split("+")[0] == expected, (name, version(name))
     assert torch.version.cuda == ("12.8" if args.variant == "cuda" else None)
