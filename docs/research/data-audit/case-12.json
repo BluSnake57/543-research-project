@@ -1,0 +1,25 @@
+{
+  "case": "case-12",
+  "focus": "Claim decomposition",
+  "source_id": "692833140428017664",
+  "root_id": "2557521:692833140428017664",
+  "final_recorded_nodes": 999,
+  "observed_nodes_60min": 661,
+  "observed_edges_60min": 664,
+  "normalized_edges": 1003,
+  "raw_edges": 1023,
+  "repairs": {
+    "duplicate": 17,
+    "backward-time": 3
+  },
+  "viral_target_464": true,
+  "viral_target_475": true,
+  "errors": [],
+  "exact_text_overlap": [
+    "693131575261659137"
+  ],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": false,
+  "status": "passed"
+}

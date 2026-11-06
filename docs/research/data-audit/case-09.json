@@ -1,0 +1,23 @@
+{
+  "case": "case-09",
+  "focus": "Rumor framing and uncertainty",
+  "source_id": "669259395902152704",
+  "root_id": "1598644159:669259395902152704",
+  "final_recorded_nodes": 1596,
+  "observed_nodes_60min": 477,
+  "observed_edges_60min": 480,
+  "normalized_edges": 1615,
+  "raw_edges": 1655,
+  "repairs": {
+    "backward-time": 17,
+    "duplicate": 23
+  },
+  "viral_target_464": true,
+  "viral_target_475": true,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

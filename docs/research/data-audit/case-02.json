@@ -1,0 +1,23 @@
+{
+  "case": "case-02",
+  "focus": "Claim and evidence review",
+  "source_id": "614790312955904000",
+  "root_id": "14293310:614790312955904000",
+  "final_recorded_nodes": 880,
+  "observed_nodes_60min": 420,
+  "observed_edges_60min": 421,
+  "normalized_edges": 889,
+  "raw_edges": 918,
+  "repairs": {
+    "duplicate": 25,
+    "backward-time": 4
+  },
+  "viral_target_464": true,
+  "viral_target_475": true,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

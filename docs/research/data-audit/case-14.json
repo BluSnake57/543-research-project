@@ -1,0 +1,23 @@
+{
+  "case": "case-14",
+  "focus": "Conflicting or irrelevant evidence",
+  "source_id": "544282227035869184",
+  "root_id": "292777349:544282227035869184",
+  "final_recorded_nodes": 180,
+  "observed_nodes_60min": 169,
+  "observed_edges_60min": 168,
+  "normalized_edges": 179,
+  "raw_edges": 183,
+  "repairs": {
+    "duplicate": 3,
+    "backward-time": 1
+  },
+  "viral_target_464": false,
+  "viral_target_475": false,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

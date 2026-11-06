@@ -1,0 +1,22 @@
+{
+  "case": "case-06",
+  "focus": "Evidence insufficient to decide",
+  "source_id": "552806757672964097",
+  "root_id": "15754281:552806757672964097",
+  "final_recorded_nodes": 259,
+  "observed_nodes_60min": 210,
+  "observed_edges_60min": 209,
+  "normalized_edges": 258,
+  "raw_edges": 260,
+  "repairs": {
+    "duplicate": 2
+  },
+  "viral_target_464": false,
+  "viral_target_475": false,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

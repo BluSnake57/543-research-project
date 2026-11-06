@@ -1,0 +1,24 @@
+{
+  "case": "case-15",
+  "focus": "Plain-language final assessment",
+  "source_id": "724939017410727938",
+  "root_id": "14669951:724939017410727938",
+  "final_recorded_nodes": 263,
+  "observed_nodes_60min": 116,
+  "observed_edges_60min": 118,
+  "normalized_edges": 266,
+  "raw_edges": 278,
+  "repairs": {
+    "self_edge": 3,
+    "backward-time": 3,
+    "duplicate": 9
+  },
+  "viral_target_464": false,
+  "viral_target_475": false,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

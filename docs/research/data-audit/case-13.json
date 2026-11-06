@@ -1,0 +1,23 @@
+{
+  "case": "case-13",
+  "focus": "Decision support",
+  "source_id": "613114185505996802",
+  "root_id": "51241574:613114185505996802",
+  "final_recorded_nodes": 128,
+  "observed_nodes_60min": 91,
+  "observed_edges_60min": 91,
+  "normalized_edges": 128,
+  "raw_edges": 134,
+  "repairs": {
+    "backward-time": 2,
+    "duplicate": 4
+  },
+  "viral_target_464": false,
+  "viral_target_475": false,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

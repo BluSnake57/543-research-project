@@ -1,0 +1,22 @@
+{
+  "case": "case-08",
+  "focus": "Numerical interpretation",
+  "source_id": "688428083540553728",
+  "root_id": "14934818:688428083540553728",
+  "final_recorded_nodes": 316,
+  "observed_nodes_60min": 65,
+  "observed_edges_60min": 64,
+  "normalized_edges": 315,
+  "raw_edges": 316,
+  "repairs": {
+    "duplicate": 1
+  },
+  "viral_target_464": false,
+  "viral_target_475": false,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

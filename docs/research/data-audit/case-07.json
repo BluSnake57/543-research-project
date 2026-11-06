@@ -1,0 +1,23 @@
+{
+  "case": "case-07",
+  "focus": "Research briefing",
+  "source_id": "731093044460683264",
+  "root_id": "2467791:731093044460683264",
+  "final_recorded_nodes": 124,
+  "observed_nodes_60min": 89,
+  "observed_edges_60min": 88,
+  "normalized_edges": 125,
+  "raw_edges": 129,
+  "repairs": {
+    "duplicate": 3,
+    "backward-time": 1
+  },
+  "viral_target_464": false,
+  "viral_target_475": false,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

@@ -1,0 +1,30 @@
+{
+  "twitter16.test": {
+    "url": "https://raw.githubusercontent.com/OwenLeng/rumor-detection-include-twitter15-twitter16data-/993475d04d91ee2a6003efa10fc944298ed33808/dataset/twitter16/twitter16.test",
+    "sha256": "bc3f02d6041a8be97a2008236669e9647ed42e46948050eed519955dd4ac9952"
+  },
+  "twitter15.dev": {
+    "url": "https://raw.githubusercontent.com/OwenLeng/rumor-detection-include-twitter15-twitter16data-/993475d04d91ee2a6003efa10fc944298ed33808/dataset/twitter15/twitter15.dev",
+    "sha256": "a70f5bda4bd63d8e7aa5e20aba5cfc2b39ae0ef3b5d211d64ccb4ba957287420"
+  },
+  "twitter16.dev": {
+    "url": "https://raw.githubusercontent.com/OwenLeng/rumor-detection-include-twitter15-twitter16data-/993475d04d91ee2a6003efa10fc944298ed33808/dataset/twitter16/twitter16.dev",
+    "sha256": "86d1208f5ede3387a67ce618f883f3dbcb24d30985b59609583da1100c4a8049"
+  },
+  "twitter15.train": {
+    "url": "https://raw.githubusercontent.com/OwenLeng/rumor-detection-include-twitter15-twitter16data-/993475d04d91ee2a6003efa10fc944298ed33808/dataset/twitter15/twitter15.train",
+    "sha256": "6dc8dbf7292e029678f93c49b1338980313df1d3f114b9c8e2ffed2569845678"
+  },
+  "twitter16.train": {
+    "url": "https://raw.githubusercontent.com/OwenLeng/rumor-detection-include-twitter15-twitter16data-/993475d04d91ee2a6003efa10fc944298ed33808/dataset/twitter16/twitter16.train",
+    "sha256": "59dba9b2cd02a47267ac4cd6ef1f833fdb62d264bc942e07bb3827019535cbe4"
+  },
+  "twitter15.test": {
+    "url": "https://raw.githubusercontent.com/OwenLeng/rumor-detection-include-twitter15-twitter16data-/993475d04d91ee2a6003efa10fc944298ed33808/dataset/twitter15/twitter15.test",
+    "sha256": "b4c26d53d6b6ac1f79bff1137fa09947dfed5a7247127f69b9af5a380627ecbe"
+  },
+  "twitter-datasets.zip": {
+    "url": "https://codeload.github.com/gszswork/Twitter15_16_dataset/zip/refs/heads/main",
+    "sha256": "37582103d43c400f0e9b772dabb6616c6c7e7c3ef99482bcd384dfb167368a8e"
+  }
+}

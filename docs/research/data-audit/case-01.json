@@ -1,0 +1,24 @@
+{
+  "case": "case-01",
+  "focus": "Early spread assessment",
+  "source_id": "643103859729166337",
+  "root_id": "237403203:643103859729166337",
+  "final_recorded_nodes": 564,
+  "observed_nodes_60min": 135,
+  "observed_edges_60min": 136,
+  "normalized_edges": 582,
+  "raw_edges": 637,
+  "repairs": {
+    "self_edge": 3,
+    "duplicate": 45,
+    "backward-time": 10
+  },
+  "viral_target_464": true,
+  "viral_target_475": true,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}

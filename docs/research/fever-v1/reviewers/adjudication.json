@@ -1,0 +1,233 @@
+{
+  "reviewer_id": null,
+  "pack_sha256": "30f2f1b7aea539d21630a43ebb9a407342d482382a375efe916facfe05f4c368",
+  "cases": [
+    {
+      "case": "case-01",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-02",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-03",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-04",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-05",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-06",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-07",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-08",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-09",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-10",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-11",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-12",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-13",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-14",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    },
+    {
+      "case": "case-15",
+      "claims": [],
+      "relevant_passage_ids": [],
+      "factual_verdict": null,
+      "emotional_language": null,
+      "scores": {
+        "claim": null,
+        "evidence": null,
+        "framing": null,
+        "interpretation": null
+      },
+      "fabrication": null,
+      "rationale": null
+    }
+  ],
+  "run_manifest_sha256": null,
+  "budget": null
+}

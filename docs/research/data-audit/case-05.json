@@ -1,0 +1,23 @@
+{
+  "case": "case-05",
+  "focus": "Emotional framing",
+  "source_id": "672432930426372096",
+  "root_id": "23195603:672432930426372096",
+  "final_recorded_nodes": 188,
+  "observed_nodes_60min": 66,
+  "observed_edges_60min": 68,
+  "normalized_edges": 194,
+  "raw_edges": 222,
+  "repairs": {
+    "backward-time": 9,
+    "duplicate": 19
+  },
+  "viral_target_464": false,
+  "viral_target_475": false,
+  "errors": [],
+  "exact_text_overlap": [],
+  "possible_event_overlap": [],
+  "id_overlap": false,
+  "heldout_eligible": true,
+  "status": "passed"
+}
