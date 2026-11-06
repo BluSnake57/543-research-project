@@ -4,6 +4,7 @@ import tempfile
 import uuid
 
 from . import learning
+from .prediction_reporting import INTERPRETATION, prediction_context, prediction_report, scope_report
 
 
 SYSTEM = '''You are a local evidence and propagation research assistant.
@@ -92,7 +93,7 @@ class AnswerFormatError(ValueError):
     pass
 
 
-def validate_answer(content, evidence):
+def answer_object(content):
     if not isinstance(content, str):
         raise AnswerFormatError(
             'The model returned no readable answer. Retry the request.'
@@ -115,6 +116,12 @@ def validate_answer(content, evidence):
             'Its response format was invalid or empty; '
             'retry the request.'
         ) from exc
+
+    return value
+
+
+def validate_answer(content, evidence):
+    value = answer_object(content)
 
     if (
         not isinstance(value, dict)
@@ -222,6 +229,36 @@ def validate_answer(content, evidence):
             else ''
         ),
     }
+
+
+def validate_prediction_answer(content, evidence):
+    final = validate_answer(content, evidence)
+    raw = answer_object(content)
+    allowed = {e['citation'] for e in evidence}
+    for claim in raw.get('claims', []):
+        citations = claim.get('citations', [])
+        if not isinstance(citations, list):
+            citations = []
+        if claim.get('verdict') in ('supported', 'refuted') and not (
+            any(isinstance(c, str) and c in allowed for c in citations)
+        ):
+            raise AnswerFormatError(
+                'Factual claims require relevant retrieved evidence IDs; '
+                'cascade IDs are not evidence.'
+            )
+    analysis = raw.get('analysis', {})
+    sections = ('claim', 'framing', 'evidence', 'limitations', 'assessment')
+    if not isinstance(analysis, dict) or any(
+        not isinstance(analysis.get(key), str) or not analysis[key].strip()
+        for key in sections
+    ):
+        raise AnswerFormatError(
+            'Complete all five analysis sections: '
+            'claim, framing, evidence, limitations, assessment.'
+        )
+    final['analysis'] = {key: analysis[key] for key in sections}
+    final['summary'] = '\n\n'.join(key.capitalize() + ': ' + analysis[key] for key in sections)
+    return final
 
 
 class Assistant:
@@ -759,7 +796,7 @@ POST:
         text,
         graph_ids,
         job,
-        thinking=False,
+        thinking=True,
     ):
         job.thinking_enabled = thinking
 
@@ -837,141 +874,15 @@ POST:
         #
         # The complete graph is still stored and passed
         # independently to GraphSAGE.
-        posts = []
-
-        for graph in attached:
-            preview = []
-
-            source_text = self._source_text(
-                graph
-            )
-
-            if source_text:
-                preview.append({
-                    'id': (
-                        graph.get(
-                            'root_id'
-                        )
-                        or 'source'
-                    ),
-                    'text': source_text[:500],
-                })
-
-            seen = {
-                str(
-                    item['id']
-                )
-                for item in preview
-            }
-
-            for node in graph.get(
-                'nodes',
-                [],
-            ):
-                if len(preview) >= 8:
-                    break
-
-                node_id = str(
-                    node.get(
-                        'id',
-                        '',
-                    )
-                )
-
-                text_value = str(
-                    node.get(
-                        'text',
-                        '',
-                    )
-                    or ''
-                ).strip()
-
-                if (
-                    not text_value
-                    or node_id in seen
-                ):
-                    continue
-
-                preview.append({
-                    'id': node_id,
-                    'text': text_value[:500],
-                })
-
-                seen.add(
-                    node_id
-                )
-
-            posts.append({
-                'graph_id':
-                    graph['id'],
-
-                'cascade_id':
-                    graph['cascade_id'],
-
-                'estimated':
-                    graph.get(
-                        'estimated'
-                    ),
-
-                'accepted':
-                    graph.get(
-                        'accepted'
-                    ),
-
-                'needs_estimation':
-                    graph.get(
-                        'needs_estimation'
-                    ),
-
-                'total_posts':
-                    len(
-                        graph.get(
-                            'nodes',
-                            [],
-                        )
-                    ),
-
-                'posts':
-                    preview,
-            })
-
-        # Retrieval also uses only a small text preview.
-        query_text = []
-
-        for graph in graphs:
-            source_text = self._source_text(
-                graph
-            )
-
-            if source_text:
-                query_text.append(
-                    source_text[:500]
-                )
-
-            for node in graph.get(
-                'nodes',
-                [],
-            )[:3]:
-                value = str(
-                    node.get(
-                        'text',
-                        '',
-                    )
-                    or ''
-                ).strip()
-
-                if value:
-                    query_text.append(
-                        value[:300]
-                    )
-
-        query = (
-            text
-            + ' '
-            + ' '.join(
-                query_text
-            )
-        )
+        # Only source text is available before prediction. Never expose later nodes,
+        # final cascade size, or rumor labels to the language model.
+        posts = [{
+            'graph_id': graph['id'], 'cascade_id': graph['cascade_id'],
+            'source_text': self._source_text(graph)[:2000],
+            'estimated': graph.get('estimated'), 'accepted': graph.get('accepted'),
+            'needs_estimation': graph.get('needs_estimation'),
+        } for graph in attached]
+        query = ' '.join(dict.fromkeys(self._source_text(g)[:1000] for g in graphs)).strip() or text
 
         job.emit(
             'stage',
@@ -1301,89 +1212,20 @@ POST:
             if not forced_prediction:
                 raise ValueError('GraphSAGE returned no prediction')
 
-            def format_prediction(prediction):
-                probability = float(prediction['viral_probability'])
-                cutoff = float(prediction['decision_cutoff'])
-                viral = bool(prediction['viral'])
-                observation = prediction.get('observation_minutes')
-                threshold = prediction.get('size_threshold')
-                model_variant = prediction.get('model_variant', 'graphsage')
-                feature_names = prediction.get('llm_feature_names', [])
-                feature_text = ', '.join(feature_names) if feature_names else 'none'
-                decision = 'VIRAL' if viral else 'NOT VIRAL'
-
-                summary = (
-                    f'Virality prediction: {probability * 100:.1f}% - {decision}. '
-                    f'The model decision threshold is {cutoff * 100:.1f}%. '
-                    f'This prediction uses the first {observation:g} minutes of propagation '
-                    f'and predicts whether the recorded cascade reaches at least {threshold} posts.'
-                )
-                reasoning = (
-                    f'Model: {model_variant}. Qwen semantic feature(s): {feature_text}. '
-                    'GraphSAGE analyzed the observed propagation structure; this probability '
-                    'is a model prediction, not a factual truth assessment.'
-                )
-                warnings = prediction.get('warnings', [])
-                if warnings:
-                    reasoning += ' Preprocessing warning(s): ' + '; '.join(str(w) for w in warnings)
-                return summary, reasoning
-
-            if len(forced_prediction) == 1:
-                prediction = forced_prediction[0]
-                summary, reasoning_summary = format_prediction(prediction)
-                final = {
-                    'summary': summary,
-                    'claims': [],
-                    'reasoning_summary': reasoning_summary,
-                }
-                data = {
-                    **final,
-                    'evidence': evidence,
-                    'tools': tool_results,
-                    'graph_ids': graph_ids,
-                    'turn_id': turn_id,
-                    'thinking_enabled': thinking,
-                    'prediction': prediction,
-                }
-            else:
-                lines = []
-                for prediction in forced_prediction:
-                    probability = float(prediction['viral_probability'])
-                    decision = 'VIRAL' if prediction['viral'] else 'NOT VIRAL'
-                    lines.append(
-                        f"{prediction.get('cascade_id')}: {probability * 100:.1f}% - {decision}"
-                    )
-                final = {
-                    'summary': 'Virality predictions: ' + '; '.join(lines),
-                    'claims': [],
-                    'reasoning_summary': (
-                        'Predictions were produced directly by the selected GraphSAGE checkpoint. '
-                        'Each probability is a model prediction rather than a factual truth assessment.'
-                    ),
-                }
-                data = {
-                    **final,
-                    'evidence': evidence,
-                    'tools': tool_results,
-                    'graph_ids': graph_ids,
-                    'turn_id': turn_id,
-                    'thinking_enabled': thinking,
-                    'predictions': forced_prediction,
-                }
-
-            if isinstance(getattr(job, 'data', None), dict):
-                data['thinking_seconds'] = job.data.get('thinking_seconds', 0)
-                data['scope'] = job.data.get('scope', [])
-
-            self.store.message(
-                conversation,
-                'assistant',
-                final['summary'],
-                data,
+            # Supply the measured early-window results, then let Qwen finish the analysis.
+            messages[0]['content'] += (
+                '\n' + INTERPRETATION
+                + '\nMeasured predictions:\n' + json.dumps(prediction_context(forced_prediction))
             )
-            job.emit('stage', stage='Virality prediction complete')
-            return data
+            user_data['audit']['system_prompt'] = messages[0]['content']
+            self.store.message_data(user_message, user_data)
+            # The prediction is fixed for this turn; evidence retrieval remains available.
+            tools = [t for t in tools if t['function']['name'] != 'graphsage_predict']
+            job.emit('stage', stage='Explaining prediction and evidence with Qwen')
 
+        validate_final = (
+            validate_prediction_answer if forced_prediction is not None else validate_answer
+        )
         for _ in range(5):
             job.check()
 
@@ -1412,25 +1254,9 @@ POST:
                 )
 
                 try:
-                    if forced_prediction is not None:
-                        raw_value = json.loads(answer['content'])
-                        if not isinstance(raw_value, dict) or not isinstance(raw_value.get('summary'), str):
-                            raise AnswerFormatError('Qwen returned an invalid answer structure; retry the request')
-                        reasoning = raw_value.get('reasoning_summary', '')
-                        final = {
-                            'summary': raw_value['summary'],
-                            'claims': [],
-                            'reasoning_summary': reasoning if isinstance(reasoning, str) else '',
-                        }
-                    else:
-                        final = validate_answer(
-                            answer[
-                                'content'
-                            ],
-                            evidence,
-                        )
+                    final = validate_final(answer['content'], evidence)
 
-                except AnswerFormatError:
+                except AnswerFormatError as format_error:
                     raw = (
                         answer.get(
                             'content'
@@ -1479,6 +1305,10 @@ POST:
                             'citation IDs. No markdown or '
                             'introductory text.'
                         )
+
+                        if forced_prediction is not None:
+                            instruction += '\nValidation problem: ' + str(format_error)
+                            instruction += '\n' + INTERPRETATION
 
                         user_data[
                             'audit'
@@ -1534,23 +1364,7 @@ POST:
                                 )
                             )
 
-                            if forced_prediction is not None:
-                                raw_value = json.loads(repaired['content'])
-                                if not isinstance(raw_value, dict) or not isinstance(raw_value.get('summary'), str):
-                                    raise AnswerFormatError('Qwen returned an invalid answer structure; retry the request')
-                                reasoning = raw_value.get('reasoning_summary', '')
-                                final = {
-                                    'summary': raw_value['summary'],
-                                    'claims': [],
-                                    'reasoning_summary': reasoning if isinstance(reasoning, str) else '',
-                                }
-                            else:
-                                final = validate_answer(
-                                    repaired[
-                                        'content'
-                                    ],
-                                    evidence,
-                                )
+                            final = validate_final(repaired['content'], evidence)
 
                         finally:
                             job.scope_call_kind = 'response'
@@ -1561,6 +1375,20 @@ POST:
                             job.require_json = (
                                 health
                             )
+
+                if forced_prediction is not None:
+                    records = (getattr(job, 'data', None) or {}).get('scope', [])
+                    final['analysis']['scope'] = scope_report(records)
+                    analysis_text = '\n\n'.join(
+                        ('Scope record (application)' if key == 'scope' else key.capitalize())
+                        + ': ' + final['analysis'][key]
+                        for key in ('claim', 'framing', 'evidence', 'limitations', 'scope', 'assessment')
+                    )
+                    final['summary'] = (
+                        prediction_report(forced_prediction)
+                        + '\n\nAnalysis (Qwen interpretation; Scope record from the application):\n'
+                        + analysis_text
+                    )
 
                 data = {
                     **final,
@@ -1580,6 +1408,11 @@ POST:
                     'thinking_enabled':
                         thinking,
                 }
+
+                if forced_prediction is not None:
+                    data['predictions'] = forced_prediction
+                    if len(forced_prediction) == 1:
+                        data['prediction'] = forced_prediction[0]
 
                 if isinstance(
                     getattr(

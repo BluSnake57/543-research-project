@@ -481,7 +481,7 @@ class ScopeIntegrationTests(unittest.TestCase):
         ) as generate:
             self.assertEqual(runtime.structured("extract", self.job), {"value": 1})
         self.assertEqual(generate.call_args.kwargs["kind"], "auxiliary")
-        self.assertNotIn("thinking", generate.call_args.kwargs)
+        self.assertTrue(generate.call_args.kwargs["thinking"])
 
     def test_startup_failure_reaps_real_spawned_worker(self):
         # Invalid device rejects before artifacts or GPU are accessed, on every CI machine.

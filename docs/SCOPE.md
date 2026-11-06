@@ -53,8 +53,9 @@ does not salvage truncated objects or substitute semantic scores.
 
 Completed generation records also retain `output_text`, `thinking_text`,
 `stop_token_ids`, and `finish_reason` so malformed-output failures can be inspected
-even when sparse token capture reaches its limit. Auxiliary extraction runs with
-thinking disabled; its empty thinking text is expected. Older records may lack
+even when sparse token capture reaches its limit. Auxiliary extraction now follows
+the conversation Thinking setting, which defaults to On. Older extraction records
+may have empty thinking text. Older records may lack
 these fields; their token IDs and phases can reconstruct captured output.
 Markdown exports include the sparse records. Older messages gain no invented
 measurements.
@@ -68,7 +69,7 @@ Settings reset clears model/device/offload preferences and preserves both pairs.
 Factory reset removes downloaded pairs within application storage. Obsolete
 GGUF and llama.cpp files are ignored and preserved during ordinary upgrades.
 
-Validation: 184 tests pass offline, including native evaluation-folder imports,
+Validation: 193 tests pass offline, including native evaluation-folder imports,
 model selection, ROCm admission and
 device routing, paired downloads, offload maps, activation math, capture,
 conversation storage, exports and existing retrieval/GraphSAGE tests.
@@ -111,3 +112,18 @@ change only: all original sparse records remain intact, including hidden tokens,
 and Markdown export retains its complete measurement records.
 
 ![Scope view using explicitly labeled demonstration data](screenshots/scope-readable.png)
+
+## Complete prediction reporting
+
+Virality requests now continue to Qwen interpretation after GraphSAGE completes.
+The report includes checkpoint identity, first-window node/edge counts, actual
+semantic inputs, probability/cutoff/class, target and preprocessing warnings.
+The model explains the claim, framing and evidence limitations; its narrative is
+kept alongside the application-generated numerical report. Scope summaries come
+directly from saved runtime metadata, including capture and Thinking-budget limits;
+Qwen cannot substitute propagation counts for activation measurements in that section.
+Raw model output is retained for review. Model context includes
+source text and computed early-window results, excluding final cascade size,
+rumor labels and later post previews. Thinking defaults On in Settings → Models.
+See [Case 01 pilot review](CASE01_REVIEW.md) for the measured false negative,
+missing report content, prompt revision and limits on research claims.

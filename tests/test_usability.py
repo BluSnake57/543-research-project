@@ -152,6 +152,21 @@ class DesktopUsabilityTests(unittest.TestCase):
         self.window.close(); self.service.jobs.shutdown(wait=True)
         self.app.processEvents(); self.temp.cleanup()
 
+    def test_thinking_defaults_on_and_is_controlled_from_settings(self):
+        w = self.window
+        w.new_conversation()
+        original = w.conversation
+        self.assertTrue(w.thinking.isChecked())
+        self.assertFalse(w.thinking.isVisible())
+        w.navigation.setCurrentRow(2)
+        self.app.processEvents()
+        self.assertTrue(w.thinking.isVisible())
+        w.thinking.setChecked(False)
+        w.save_draft()
+        w.new_conversation()
+        self.assertTrue(w.thinking.isChecked())
+        self.assertFalse(self.service.store.setting('draft:'+original)['thinking'])
+
     def test_drafts_thinking_attachments_and_restart(self):
         w = self.window
         w.new_conversation(); first = w.conversation
@@ -233,7 +248,7 @@ class DesktopUsabilityTests(unittest.TestCase):
         w.dialogs[-1].close()
         w.resize(900, 650); self.app.processEvents()
         self.assertEqual(w.width(), 900); self.assertEqual(w.height(), 650)
-        self.assertTrue(w.thinking.isVisible()); self.assertTrue(w.send_button.isVisible())
+        self.assertFalse(w.thinking.isVisible()); self.assertTrue(w.send_button.isVisible())
         with patch.object(self.service, 'chat', side_effect=ValueError('Test submission')) as chat:
             w.message_input.setFocus(); w.message_input.setPlainText('keyboard request')
             QTest.keyClick(w.message_input, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)

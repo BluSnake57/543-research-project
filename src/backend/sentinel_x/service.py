@@ -139,7 +139,7 @@ class Service:
             return {'generation': True, 'function_calling': True, 'scope': True}
         return self.jobs.submit('qwen-smoke', work)
 
-    def chat(self, conversation, text, graph_ids, thinking=False):
+    def chat(self, conversation, text, graph_ids, thinking=True):
         if not isinstance(thinking, bool):
             raise ValueError('Thinking must be On or Off')
         if not text.strip() or len(text) > 6000:
@@ -178,7 +178,7 @@ class Service:
             raise ValueError('Regeneration requires a request of 1–6000 characters')
         branch = self.store.branch_at(conversation, ident)
         job = self.chat(branch, text, message['data'].get('graph_ids', []),
-                        message['data'].get('thinking_enabled', False))
+                        message['data'].get('thinking_enabled', True))
         return branch, job
 
     def rename(self, ident, title):

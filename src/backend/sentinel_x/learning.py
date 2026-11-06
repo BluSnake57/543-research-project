@@ -1582,7 +1582,11 @@ def predict(
                 )[0]
             )
 
+            prefix = observed_prefix(graph, metadata['config']['window'])
             outputs.append({
+                'observed_nodes': len(prefix['nodes']),
+                'observed_edges': len(prefix['edges']),
+                'semantic_features': dict(zip(feature_names, map(float, semantic))) if use_llm else {},
                 'graph_id':
                     graph['id'],
 

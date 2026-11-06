@@ -182,3 +182,12 @@ To generate a fresh set of the same scenarios from the downloaded corpus:
 
 No model inference or evidence-reference adjudication has run as part of preparing
 these materials. Expected spread targets exist; actual model scores remain blank.
+
+## Case 01 reporting revision
+
+Case 01 now has a version-2 primary prompt and an optional standardized completion
+follow-up in `USER_TASK.md`. Record the prompt version and score any assisted
+follow-up separately. The revision followed inspection of a pilot failure; freeze
+it before a new run rather than treating earlier and revised outputs as one fixed
+protocol. [The pilot review](CASE01_REVIEW.md) distinguishes reporting omissions
+from an actual false-negative prediction. Keep that review out of model context.

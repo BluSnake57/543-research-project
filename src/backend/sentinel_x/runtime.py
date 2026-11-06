@@ -164,7 +164,7 @@ class ScopeRuntime:
             tools,
             job,
             kind=getattr(job, "scope_call_kind", "response"),
-            thinking=bool(getattr(job, "thinking_enabled", False)),
+            thinking=bool(getattr(job, "thinking_enabled", True)),
         )
         if hasattr(job, "finish_thinking"):
             job.finish_thinking()
@@ -184,6 +184,7 @@ class ScopeRuntime:
                 [],
                 job,
                 kind="auxiliary",
+                thinking=bool(getattr(job, "thinking_enabled", True)),
                 max_tokens=2500,
             )
             content = result.get("content")
