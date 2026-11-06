@@ -13,7 +13,7 @@ the full model. There is no automatic CPU fallback or change to model size.
 ## Prerequisites
 
 Install a ROCm-capable PyTorch build in the application virtual environment using
-[AMD's PyTorch installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/pytorch-install.html)
+[AMD's PyTorch installation guide](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html)
 for your GPU, operating system, and Python version. The repository's ordinary
 dependency installation does not select a ROCm PyTorch build for you. Installing
 the ROCm SDK alongside a CUDA PyTorch wheel does not enable AMD execution.
@@ -34,14 +34,39 @@ the PyTorch HIP version distinguishes the installed backend.
 
 ## Configure and check
 
-After installing ROCm PyTorch in `.venv`, install the remaining application
-dependencies and save the device selection:
+Close the app before replacing its Python packages. Setup can replace PyTorch
+from an explicit wheel index before installing the other dependencies. For a
+Linux x86-64 host using ROCm 7.2, the following selects the official
+[ROCm 7.2 wheel index](https://download.pytorch.org/whl/rocm7.2/torch/):
+
+```sh
+python run.py setup --device rocm --torch-index-url https://download.pytorch.org/whl/rocm7.2
+```
+
+Choose an index compatible with your host; this example is not a universal
+ROCm version selection. Pip must have a wheel for the environment's Python and
+platform. `--torch-index-url` explicitly reinstalls PyTorch, including replacing
+a newer CUDA build with the ROCm build available at that index. It does not
+install host drivers. No separate llama.cpp runner is needed on this branch.
+Setup downloads only the torch wheel from that index, then installs that exact
+wheel with ordinary dependencies from PyPI and backend dependencies from the
+selected index. This avoids picking a newer CUDA wheel from PyPI or requiring
+every dependency to be mirrored by the ROCm index.
+
+Alternatively, after manually installing AMD's recommended wheels in `.venv`,
+install the remaining application dependencies and save the device selection:
 
 ```sh
 python run.py setup --device rocm --model 2b --cpu-offload sae
 ```
 
-Setup preserves an installed PyTorch build satisfying `torch>=2.6,<3`. Recheck
+Without `--torch-index-url`, setup preserves an installed PyTorch build satisfying
+`torch>=2.6,<3`. Explicit `--device rocm` checks for
+HIP before installing ordinary dependencies and again after installation. A
+missing or CUDA-only PyTorch build fails with instructions instead of silently
+installing CUDA packages for an AMD request. `--skip-install --device rocm` also
+checks the installed build. These setup checks do not require an available GPU;
+use the diagnostic below to check the driver and kernels. Recheck
 the HIP version after dependency or environment changes. `--reset-venv` removes
 that environment, so install ROCm PyTorch again if rebuilding it. Model downloads
 remain separate: use the Models buttons or setup's `--download-models` flag.
@@ -72,7 +97,11 @@ not cover every driver allocation; measure actual peaks during full-model runs.
 
 Offline tests cover HIP/CUDA build mismatches, missing devices, BF16 and memory
 failures, GPU placement with CPU offload, setup/UI persistence, and generation
-provenance. The diagnostic's NF4 projection has run on CPU. This checkout's
-environment has a CUDA PyTorch build, so actual ROCm kernels and full-model AMD
-inference remain unvalidated. ROCm application support does not install host
+provenance. On 2026-11-05 the native Fedora 45 environment was repaired from
+CUDA PyTorch to `torch==2.14.1+rocm7.2` with HIP `7.2.53211`, Python 3.15, and
+`bitsandbytes==0.50.2`. On the Radeon RX 9070 XT (`gfx1201`), a BF16 identity
+matrix multiplication and the diagnostic's NF4 projection both passed. The
+dependency check also passed. This validates small GPU kernels on this host;
+full-model AMD inference and peak memory remain unvalidated.
+ROCm application support does not install host
 drivers or add the Docker configuration from the separate Scope Docker branch.

@@ -28,7 +28,10 @@ The old `--runtime` option and GGUF import are removed.
 
 AMD GPUs use an explicitly selected ROCm PyTorch build. See
 [ROCm prerequisites, configuration, and checks](docs/ROCM.md) before selecting
-`--device rocm`; ordinary setup does not replace CUDA PyTorch with ROCm.
+`--device rocm`. Use `--torch-index-url URL` to replace PyTorch from a compatible
+official ROCm wheel index. Explicit ROCm setup rejects a missing or CUDA-only
+build before installing the remaining dependencies; it verifies HIP again afterward.
+Selecting ROCm in Models changes the saved preference, not installed packages.
 
 `--skip-install` checks the environment and installs local GraphSAGE checkpoint
 pairs without reinstalling dependencies. Keep each original `.pt`/`.json` pair

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import uuid
 from pathlib import Path
 
@@ -53,7 +54,10 @@ def preflight(device, context=8192, model="9b", offload="none"):
         if device == "rocm" and not torch.version.hip:
             raise ValueError(
                 "ROCm is unavailable in this PyTorch build. Install ROCm-enabled PyTorch "
-                "and compatible bitsandbytes; see docs/ROCM.md."
+                f"and compatible bitsandbytes in {sys.executable} "
+                f"(installed torch: {torch.__version__}). Selecting ROCm does not install it. "
+                "Use setup --device rocm --torch-index-url URL; see docs/ROCM.md. "
+                "No separate llama.cpp runner is needed."
             )
         if device == "cuda" and torch.version.hip:
             raise ValueError("This PyTorch build uses ROCm. Select ROCm in Models for AMD GPUs.")

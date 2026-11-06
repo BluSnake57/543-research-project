@@ -56,7 +56,7 @@ Settings reset clears model/device/offload preferences and preserves both pairs.
 Factory reset removes downloaded pairs within application storage. Obsolete
 GGUF and llama.cpp files are ignored and preserved during ordinary upgrades.
 
-Validation: 163 tests pass offline, including model selection, ROCm admission and
+Validation: 169 tests pass offline, including model selection, ROCm admission and
 device routing, paired downloads, offload maps, activation math, capture,
 conversation storage, exports and existing retrieval/GraphSAGE tests.
 A real bitsandbytes 0.50.2 NF4

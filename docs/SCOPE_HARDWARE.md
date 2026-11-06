@@ -68,8 +68,9 @@ before release. Model artifacts were not downloaded for this investigation.
 
 The native application now also has an explicit ROCm device choice with the same
 offload policies and memory targets. See [ROCm setup and checks](ROCM.md). The
-current environment has CUDA PyTorch, so AMD kernel and full-model validation
-remain pending a compatible ROCm environment.
+native Fedora 45 environment now uses PyTorch 2.14.1+rocm7.2. BF16 matrix
+multiplication and the bitsandbytes NF4 diagnostic passed on the RX 9070 XT
+(`gfx1201`). Full-model AMD inference and memory validation remain pending.
 
 ## Primary sources
 

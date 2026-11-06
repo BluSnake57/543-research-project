@@ -30,6 +30,72 @@ def run(command):
     subprocess.run([str(part) for part in command], cwd=ROOT, check=True)
 
 
+def verify_rocm_python(python):
+    """Check the target interpreter, not the Python running the installer."""
+    result = subprocess.run(
+        [
+            str(python),
+            "-c",
+            "import json, torch; print(json.dumps({'torch': torch.__version__, "
+            "'hip': torch.version.hip}))",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        installed = json.loads(result.stdout) if result.returncode == 0 else {}
+    except ValueError:
+        installed = {}
+    if not installed.get("hip"):
+        detail = installed.get("torch") or result.stderr.strip() or "PyTorch could not be inspected"
+        raise ValueError(
+            f"ROCm-enabled PyTorch is required in {python}. Detected: {detail}. "
+            "Rerun setup --device rocm --torch-index-url URL using the official ROCm "
+            "wheel index compatible with your GPU, OS and Python (see docs/ROCM.md), "
+            "or install the AMD-provided wheels into this environment first. "
+            "Selecting ROCm alone does not install it. No separate llama.cpp runner is used."
+        )
+    print(f"ROCm PyTorch ready: {installed['torch']} (HIP {installed['hip']})", flush=True)
+
+
+def install_torch(python, index_url):
+    """Select torch only from the requested index; resolve its dependencies separately."""
+    with tempfile.TemporaryDirectory(prefix="sentinel-torch-") as directory:
+        run(
+            [
+                python,
+                "-m",
+                "pip",
+                "download",
+                "--no-deps",
+                "--only-binary=:all:",
+                "--dest",
+                directory,
+                "torch>=2.6,<3",
+                "--index-url",
+                index_url,
+            ]
+        )
+        wheels = list(Path(directory).glob("torch-*.whl"))
+        if len(wheels) != 1:
+            raise ValueError("Expected exactly one PyTorch wheel from the selected index")
+        # Pin the wheel by path: a newer CUDA version on PyPI cannot win resolution.
+        # Keep PyPI available for dependencies missing from vendor indexes.
+        run(
+            [
+                python,
+                "-m",
+                "pip",
+                "install",
+                "--force-reinstall",
+                str(wheels[0]),
+                "--extra-index-url",
+                index_url,
+            ]
+        )
+
+
 def application_directory():
     """Find storage without creating it or running migrations during reset preflight."""
     override = os.environ.get("SENTINEL_X_DATA_DIR") or os.environ.get("VERITAS_DATA_DIR")
@@ -288,6 +354,10 @@ def main(argv=None):
     parser.add_argument("--data-dir", type=Path, help="Override application storage for this run")
     parser.add_argument("--dev", action="store_true", help="Include testing and packaging tools")
     parser.add_argument(
+        "--torch-index-url",
+        help="Replace PyTorch using this wheel index before installing app dependencies",
+    )
+    parser.add_argument(
         "--skip-install",
         action="store_true",
         help="Skip dependency installation; still check dependencies and configure resources",
@@ -340,6 +410,10 @@ def main(argv=None):
     if args.data_dir:
         args.data_dir = args.data_dir.expanduser().absolute()
     resetting_app = args.reset_settings or args.factory_reset
+    if args.torch_index_url and (args.skip_install or args.configure_only or resetting_app):
+        parser.error(
+            "--torch-index-url cannot be combined with skip-install, configure-only or resets"
+        )
     if args.reset_venv and args.skip_install:
         parser.error("--reset-venv cannot be combined with --skip-install")
     if resetting_app and (
@@ -382,9 +456,16 @@ def main(argv=None):
         parser.error("--venv must point to a Python virtual environment")
     if not args.skip_install:
         run([python, "-m", "pip", "install", "--upgrade", "pip"])
+        if args.torch_index_url:
+            install_torch(python, args.torch_index_url)
+        # Fail before ordinary pip installation can fetch a CUDA wheel for an AMD request.
+        if args.device == "rocm":
+            verify_rocm_python(python)
         requirements = "requirements-dev.txt" if args.dev else "requirements.txt"
         run([python, "-m", "pip", "install", "-r", ROOT / requirements])
     run([python, "-m", "pip", "check"])
+    if args.device == "rocm":
+        verify_rocm_python(python)
     if resetting_app:
         print("Python environment rebuilt. Run setup --skip-install to install local checkpoints.")
         return 0

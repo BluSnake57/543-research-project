@@ -259,6 +259,86 @@ class EnvironmentSetupTests(unittest.TestCase):
 
 
 class ScopeSetupOptionsTests(unittest.TestCase):
+    def test_torch_wheel_comes_only_from_requested_index_with_dependencies_separate(self):
+        def download(command):
+            if "download" in command:
+                directory = Path(command[command.index("--dest") + 1])
+                (directory / "torch-2.14.1+rocm7.2-cp315.whl").touch()
+
+        with patch.object(setup, "run", side_effect=download) as run:
+            setup.install_torch(
+                Path("target/bin/python"), "https://download.pytorch.org/whl/rocm7.2"
+            )
+        fetch, install = [call.args[0] for call in run.call_args_list]
+        self.assertIn("--no-deps", fetch)
+        self.assertNotIn("--extra-index-url", fetch)
+        self.assertIn("--force-reinstall", install)
+        self.assertTrue(install[5].endswith(".whl"))
+        self.assertIn("--extra-index-url", install)
+        self.assertNotIn("--no-deps", install)
+
+    def test_rocm_probe_rejects_cuda_missing_and_broken_torch(self):
+        for result in (
+            Mock(returncode=0, stdout='{"torch": "2.15+cu132", "hip": null}', stderr=""),
+            Mock(returncode=1, stdout="", stderr="No module named torch"),
+            Mock(returncode=0, stdout="invalid output", stderr=""),
+        ):
+            with patch.object(setup.subprocess, "run", return_value=result) as child:
+                with self.assertRaisesRegex(ValueError, "--torch-index-url"):
+                    setup.verify_rocm_python(Path("target/bin/python"))
+                self.assertEqual(child.call_args.args[0][0], "target/bin/python")
+
+    def test_rocm_probe_accepts_hip_without_requiring_gpu_at_install_time(self):
+        result = Mock(returncode=0, stdout='{"torch": "2.14+rocm7.2", "hip": "7.2"}')
+        with patch.object(setup.subprocess, "run", return_value=result):
+            setup.verify_rocm_python(Path("target/bin/python"))
+
+    def test_rocm_install_replaces_torch_before_app_dependencies_and_verifies_after(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = Path(directory)
+            setup.venv.EnvBuilder(with_pip=False).create(environment)
+            events = []
+            with (
+                patch.object(setup, "run", side_effect=lambda command: events.append(command)),
+                patch.object(
+                    setup, "install_torch", side_effect=lambda python, url: events.append(url)
+                ),
+                patch.object(
+                    setup, "verify_rocm_python", side_effect=lambda python: events.append("probe")
+                ),
+                patch.object(setup.subprocess, "run", return_value=Mock(returncode=0)),
+            ):
+                setup.main(
+                    [
+                        "--venv",
+                        directory,
+                        "--device",
+                        "rocm",
+                        "--torch-index-url",
+                        "https://download.pytorch.org/whl/rocm7.2",
+                    ]
+                )
+            self.assertEqual(events[1], "https://download.pytorch.org/whl/rocm7.2")
+            self.assertEqual(events[2], "probe")
+            self.assertIn("-r", events[3])
+            self.assertEqual(events[-1], "probe")
+
+    def test_rocm_setup_without_hip_fails_before_default_dependency_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            setup.venv.EnvBuilder(with_pip=False).create(directory)
+            with (
+                patch.object(setup, "run") as run,
+                patch.object(setup, "verify_rocm_python", side_effect=ValueError("missing HIP")),
+            ):
+                with self.assertRaisesRegex(ValueError, "missing HIP"):
+                    setup.main(["--venv", directory, "--device", "rocm"])
+                self.assertEqual(run.call_count, 1)  # Only pip itself; no CUDA torch download.
+
+    def test_torch_index_cannot_be_silently_ignored(self):
+        for flag in ("--skip-install", "--configure-only", "--factory-reset", "--reset-settings"):
+            with self.assertRaises(SystemExit):
+                setup.main([flag, "--torch-index-url", "https://download.pytorch.org/whl/rocm7.2"])
+
     def test_rocm_device_selection_is_saved_and_preserved_on_rerun(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
