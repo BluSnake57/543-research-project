@@ -53,9 +53,9 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
 .venv/bin/python -m pip check
 ```
 
-The requested limits are 16 GiB CPU RAM or 6 GiB GPU VRAM. These are validation
-targets, not measured guarantees. CPU-only is explicit and slower; CUDA requires
-a functioning compatible NVIDIA driver; ROCm requires a compatible AMD driver
-and HIP-enabled PyTorch. Offloading can reduce VRAM while raising
-RAM consumption. The application rejects configurations failing its memory
-checks; full loading peaks and latency remain to be measured.
+The native app imposes no estimated-memory admission checks, GPU allocator cap,
+or combined application/worker RAM budget. It attempts loading and generation
+and reports actual failures. Backend compatibility checks remain enabled. Use
+CPU offloading, a smaller model, or less context if an allocation fails. If the
+OS kills the worker, the app reports an unexpected worker exit rather than a
+Python allocation error. Full-model memory usage still needs measurement.

@@ -1,4 +1,4 @@
-"""Check the selected GPU backend, memory admission, and NF4 without model downloads."""
+"""Check the selected GPU backend and NF4 without model downloads."""
 
 import argparse
 import json

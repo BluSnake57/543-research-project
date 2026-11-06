@@ -1,3 +1,6 @@
+> Historical memory targets below are research validation targets, not runtime limits.
+> Native memory admission checks, allocator caps, and RSS enforcement have been removed.
+
 # Scope hardware investigation
 
 Updated 2026-11-05. Required deployment limits: 16 GiB CPU RAM or 6 GiB GPU

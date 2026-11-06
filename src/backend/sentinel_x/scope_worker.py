@@ -37,18 +37,10 @@ def placement(device, offload, profile):
 
 
 def preflight(device, context=8192, model="9b", offload="none"):
-    import psutil
     import torch
 
     model_profile(model)
     tensor_device(device)
-    # Admission estimates are intentionally distinct from measured peak-memory claims.
-    cpu_required = (12 if model == "9b" else 6) + context / 8192
-    gpu_required = (9 if model == "9b" else 3.5) + context / 8192
-    if offload == "sae":
-        gpu_required -= 1 if model == "9b" else 0.25
-    if offload == "modules":
-        gpu_required = (4.3 if model == "9b" else 2.5) + context / 8192
     if device != "cpu":
         backend = "ROCm" if device == "rocm" else "CUDA"
         if device == "rocm" and not torch.version.hip:
@@ -66,18 +58,8 @@ def preflight(device, context=8192, model="9b", offload="none"):
                 f"{backend} is unavailable. Check the GPU driver and device permissions, "
                 "or explicitly select CPU."
             )
-        available, _ = torch.cuda.mem_get_info()
-        if gpu_required > min(5.5, available / 1024**3):
-            raise ValueError(
-                f"Insufficient {backend} memory within the 6 GiB limit. Use CPU offloading, "
-                "reduce context, or select the 2B fallback."
-            )
         if not torch.cuda.is_bf16_supported():
             raise ValueError(f"{backend} BF16 support is required; select CPU on this device.")
-    if cpu_required > min(15, psutil.virtual_memory().available / 1024**3):
-        raise ValueError(
-            "Insufficient CPU memory within the 16 GiB limit; select 2B or reduce context."
-        )
     return torch.bfloat16 if device != "cpu" else torch.float32
 
 
@@ -162,9 +144,6 @@ class Engine:
         offload = config.get("offload", "none") if self.device != "cpu" else "none"
         dtype = preflight(self.device, config["context"], config.get("model", "9b"), offload)
         device_map, sae_device = placement(self.device, offload, profile)
-        if self.device != "cpu":
-            total = torch.cuda.get_device_properties(0).total_memory
-            torch.cuda.set_per_process_memory_fraction(min(1.0, 5.5 * 1024**3 / total))
         if self.device == "rocm":
             check_quantization(self.device, dtype)
         root = Path(config["root"])

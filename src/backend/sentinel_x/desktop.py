@@ -579,7 +579,7 @@ class Window(CheckpointControls, QMainWindow):
         layout.addWidget(advanced); advanced.hide()
         advanced_button.toggled.connect(advanced.setVisible)
         advanced_button.toggled.connect(lambda checked: advanced_button.setText('Advanced settings ▾' if checked else 'Advanced settings ▸'))
-        note = QLabel('Chat runs on this device. Quantized models use capped memory budgets. Offloading and the 2B fallback are available in Models; actual fit requires validation.')
+        note = QLabel('Chat runs on this device. Memory allocation failures are reported when loading or generating. Offloading and the 2B fallback are available in Models; actual fit requires validation.')
         note.setWordWrap(True); layout.addWidget(note); layout.addStretch()
 
     def open_trainer(self):

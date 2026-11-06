@@ -61,19 +61,6 @@ class ScopeRuntime:
                 job.check()
             if not self.connection or not self.process:
                 raise RuntimeError("Scope worker stopped")
-            import psutil
-
-            try:
-                used = (
-                    psutil.Process().memory_info().rss
-                    + psutil.Process(self.process.pid).memory_info().rss
-                )
-                if used > 15 * 1024**3:
-                    raise RuntimeError(
-                        "Scope exceeded the 15 GiB application RAM budget. Select 2B or reduce context."
-                    )
-            except psutil.NoSuchProcess:
-                pass
             if self.connection.poll(0.1):
                 try:
                     event = self.connection.recv()

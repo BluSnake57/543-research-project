@@ -6,7 +6,7 @@ CPU-offload policies are available. Settings and saved Scope records identify
 the backend as `rocm`.
 
 The worker checks for a HIP-enabled PyTorch build, an available GPU, BF16 support,
-and the existing memory budgets before loading. It also runs a small bitsandbytes
+before loading. It also runs a small bitsandbytes
 NF4 projection first, so a missing or incompatible kernel fails before loading
 the full model. There is no automatic CPU fallback or change to model size.
 
@@ -89,14 +89,14 @@ follow the same worker path as CUDA. Saved records retain `device: rocm`.
 
 ## Memory and validation
 
-The branch's existing limits apply to both GPU backends: a 6 GiB GPU target,
-5.5 GiB allocator allowance, and a 15 GiB combined application/worker RSS check
-within the 16 GiB CPU target. These limits are intentionally unchanged. Select
-2B, reduce context, or offload modules if admission fails. Allocator limits do
-not cover every driver allocation; measure actual peaks during full-model runs.
+The native app imposes no estimated-memory admission checks, GPU allocator cap,
+or combined application/worker RAM budget. It attempts loading and generation
+and reports actual failures. Backend compatibility checks remain enabled. Use
+CPU offloading, a smaller model, or less context if an allocation fails. If the
+OS kills the worker, the app reports an unexpected worker exit rather than a
+Python allocation error. Full-model memory usage still needs measurement.
 
-Offline tests cover HIP/CUDA build mismatches, missing devices, BF16 and memory
-failures, GPU placement with CPU offload, setup/UI persistence, and generation
+Offline tests cover HIP/CUDA build mismatches, missing devices, BF16 failures, GPU placement with CPU offload, setup/UI persistence, and generation
 provenance. On 2026-11-05 the native Fedora 45 environment was repaired from
 CUDA PyTorch to `torch==2.14.1+rocm7.2` with HIP `7.2.53211`, Python 3.15, and
 `bitsandbytes==0.50.2`. On the Radeon RX 9070 XT (`gfx1201`), a BF16 identity

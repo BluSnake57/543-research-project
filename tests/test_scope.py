@@ -291,13 +291,12 @@ class WorkerGenerationTests(unittest.TestCase):
         torch.testing.assert_close(outputs[0], torch.cat(outputs[1:], dim=1), atol=1e-6, rtol=1e-5)
         self.assertEqual(last.past_key_values.get_seq_length(), 4)
 
-    def test_preflight_rejects_memory_and_never_silently_falls_back(self):
+    def test_preflight_checks_backend_without_estimated_memory_rejection(self):
         with patch("torch.version.hip", None), patch("torch.cuda.is_available", return_value=False):
             with self.assertRaisesRegex(ValueError, "CUDA is unavailable"):
                 preflight("cuda")
         with patch("psutil.virtual_memory", return_value=SimpleNamespace(available=8 * 1024**3)):
-            with self.assertRaisesRegex(ValueError, "Insufficient CPU memory"):
-                preflight("cpu")
+            self.assertEqual(preflight("cpu"), torch.float32)
         with patch("psutil.virtual_memory", return_value=SimpleNamespace(available=64 * 1024**3)):
             self.assertEqual(preflight("cpu"), torch.float32)
 
@@ -338,6 +337,19 @@ class ScopeIntegrationTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "without Scope"):
                 runtime.stream([], [], self.job)
+
+    def test_actual_allocation_error_is_reported_from_worker(self):
+        runtime = self.service.runtime
+        runtime.process = Mock()
+        runtime.connection = Mock()
+        runtime.connection.poll.return_value = True
+        runtime.connection.recv.return_value = {
+            "event": "error",
+            "message": "HIP out of memory. Tried to allocate 2 GiB.",
+        }
+        with self.assertRaisesRegex(ValueError, "HIP out of memory"):
+            runtime.receive(self.job)
+        runtime.process = runtime.connection = None
 
     def test_invalid_or_empty_ipc_is_actionable(self):
         runtime = self.service.runtime

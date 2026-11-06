@@ -48,15 +48,21 @@ class RocmTests(unittest.TestCase):
         with self.gpu(hip=None):
             self.assertEqual(preflight("cuda", 2048, "2b"), torch.bfloat16)
 
-    def test_driver_memory_and_bf16_failures_do_not_fall_back_to_cpu(self):
+    def test_driver_and_bf16_failures_do_not_fall_back_to_cpu(self):
         for options, message in (
             ({"available": False}, "ROCm is unavailable"),
-            ({"free_gib": 2}, "Insufficient ROCm memory"),
             ({"bf16": False}, "ROCm BF16 support"),
         ):
             with self.subTest(options=options), self.gpu(**options):
                 with self.assertRaisesRegex(ValueError, message):
                     preflight("rocm", 2048, "2b")
+
+    def test_low_reported_memory_does_not_reject_model_before_allocation(self):
+        with (
+            self.gpu(free_gib=0.1),
+            patch("psutil.virtual_memory", return_value=SimpleNamespace(available=1)),
+        ):
+            self.assertEqual(preflight("rocm", 32768, "9b"), torch.bfloat16)
 
     def test_nf4_failure_retains_backend_and_original_diagnostic(self):
         with patch("bitsandbytes.nn.Linear4bit", side_effect=RuntimeError("missing HIP kernel")):
@@ -80,7 +86,7 @@ class RocmTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "bad NF4 kernel"):
                 Engine({"device": "rocm", "model": "2b", "context": 2048, "offload": "sae"})
             probe.assert_called_once_with("rocm", torch.bfloat16)
-            allocator.assert_called_once_with(5.5 / 16)
+            allocator.assert_not_called()
             verify.assert_not_called()
 
 
