@@ -45,7 +45,10 @@ password from `.secrets/vnc_password` and enter it in noVNC. The generator
 preserves existing passwords. The private, Git-ignored secret is mounted
 read-only; it is not embedded in the image or environment variables.
 
-The service binds to the host's IPv4 loopback address. For remote use, tunnel it:
+The service defaults to the host's IPv4 loopback address. `127.0.0.1` in a
+browser refers to the browser's own machine, not the remote server. For remote
+browser access or Nginx Proxy Manager, use the configuration below. An SSH tunnel
+is also available without changing the default bind address:
 
 ```sh
 ssh -N -L 6080:127.0.0.1:6080 user@gpu-host
@@ -54,6 +57,114 @@ ssh -N -L 6080:127.0.0.1:6080 user@gpu-host
 Sentinel-X starts automatically. Closing it leaves the desktop available; use
 its launcher to reopen it. The Trainer has a separate launcher. Supervisor
 restarts failed processes, and `tini` forwards signals and reaps orphan processes.
+
+## Remote access and Nginx Proxy Manager
+
+The server runs the desktop and all model computation; the other person only
+needs a browser. For a server publishing container port **6080** on host port
+**36080**, set these values in the server checkout's `.env`:
+
+```dotenv
+NOVNC_BIND_ADDRESS=0.0.0.0
+NOVNC_PORT=36080
+```
+
+You can use the server's specific private/LAN IP instead of `0.0.0.0` to bind
+only that interface. This must be an address assigned to the Docker host.
+With the default `127.0.0.1` binding, changing only the port still leaves the
+service inaccessible from other machines or a separate proxy container.
+See [Docker's port publishing documentation](https://docs.docker.com/engine/network/port-publishing/).
+
+Rebuild to include the updated browser links, then recreate the service. Use the
+same CPU/online override files as your existing deployment; CUDA offline example:
+
+```sh
+docker compose build
+docker compose up --no-build --force-recreate --wait -d
+docker compose port desktop 6080
+```
+
+The reported mapping should be `0.0.0.0:36080` (or your chosen private IP).
+Open `http://SERVER_IP:36080/` from another machine on the same network. Use
+**HTTP** for this direct check; TLS is supplied by the reverse proxy later.
+Allow TCP 36080 from the client/proxy through the server/network firewall.
+Keep the same Compose project and home volume so downloads and settings persist.
+
+In **Nginx Proxy Manager → Hosts → Proxy Hosts → Add Proxy Host**, configure:
+
+| Field | Value |
+| --- | --- |
+| Domain Names | Your desktop hostname, e.g. `sentinel.example.com` |
+| Scheme | `http` |
+| Forward Hostname / IP | The Docker server's private/LAN IP |
+| Forward Port | `36080` (the host port) |
+| Websockets Support | Enabled |
+| SSL | Configure a certificate for the hostname and enable Force SSL |
+
+For longer idle sessions, put this in the proxy host's **Advanced** configuration:
+
+```nginx
+proxy_read_timeout 3600s;
+proxy_send_timeout 3600s;
+proxy_buffering off;
+```
+
+If Nginx Proxy Manager itself runs in Docker, `127.0.0.1` refers to its own
+container. Use the server's reachable IP above. If both containers instead share
+a Docker network, forward to the desktop's service/network alias on **6080**;
+the host mapping **36080** is only for connections through the host.
+Point DNS at the proxy and route public HTTPS traffic to the proxy. Share
+`https://sentinel.example.com/` and the desktop password with the other person.
+Keep 36080 private to the LAN/proxy; HTTP and the export Basic authentication
+need TLS at the public edge. Each container is one shared desktop, so users
+connecting to the same container see the same session and files.
+
+WebSocket forwarding is required even when the landing page loads correctly:
+[NGINX WebSocket documentation](https://nginx.org/en/docs/http/websocket.html),
+[Nginx Proxy Manager guide](https://nginxproxymanager.com/guide/).
+
+### Optional path prefix
+
+A dedicated hostname is simplest with Nginx Proxy Manager. The landing page also
+supports a directory such as `https://example.com/sentinel/`: its desktop,
+exports, and WebSocket links retain the public prefix. The proxy must redirect
+`/sentinel` to `/sentinel/` and strip `/sentinel/` when forwarding. For a custom
+NGINX server, the locations would be:
+
+```nginx
+location = /sentinel { return 301 /sentinel/; }
+location /sentinel/ {
+    proxy_pass http://SERVER_IP:36080/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_buffering off;
+}
+```
+
+The trailing slash on `proxy_pass` is required to remove the prefix. Enter via
+the landing page so it supplies the correct public connection URL to noVNC.
+
+### If the server IP still does not respond
+
+Run these on the Docker server (include your usual Compose override files):
+
+```sh
+docker compose ps
+docker compose port desktop 6080
+docker compose logs --tail=100 desktop
+curl -I http://127.0.0.1:36080/
+curl -I http://SERVER_IP:36080/
+```
+
+Replace `SERVER_IP` with the actual address. A loopback curl failure is expected
+if you bound only a specific LAN IP. If both fail, check startup logs and the
+published mapping. If the server can reach its own LAN IP but another machine
+cannot, check routing and firewall rules. If the page loads but the desktop
+doesn't connect, check WebSocket support: `/websockify` should return status
+**101 Switching Protocols** in the browser's Network/WebSocket panel.
 
 ## Downloads, model selection, and offloading
 
@@ -166,7 +277,8 @@ Include the online override if keeping an online session.
 | `CONTAINER_TMP_SIZE` | `1g` | `/tmp` capacity; consumes the RAM allowance too |
 | `CONTAINER_PIDS` | `512` | Maximum processes/threads |
 | `DESKTOP_SIZE` | `1600x900` | Virtual display resolution |
-| `NOVNC_PORT` | `6080` | Localhost browser port |
+| `NOVNC_BIND_ADDRESS` | `127.0.0.1` | Host bind address; use a private IP or `0.0.0.0` for remote/proxy access |
+| `NOVNC_PORT` | `6080` | Published host browser port, e.g. `36080` |
 
 The 16 GiB default is a configurable limit, **not a guarantee that 9B fits**.
 It includes the desktop, application, workers, caches, and temporary memory.
@@ -211,7 +323,8 @@ all Linux capabilities dropped, and `no-new-privileges`. `/tmp` and `/run` are
 bounded `noexec,nosuid,nodev` tmpfs mounts. Default seccomp and host container
 security profiles remain active. No Docker socket, host home, privileged mode,
 host networking, or host PID namespace is used. VNC listens on container loopback;
-only HTTP/WebSocket access is published on host loopback.
+only HTTP/WebSocket access is published, on host loopback by default or the
+configured `NOVNC_BIND_ADDRESS`.
 
 An internal network is not a firewall against every host service or peer
 container. The desktop user can modify its own data, and containers share the
@@ -251,7 +364,15 @@ git diff --check
 ```
 
 The Compose checker validates CPU/CUDA with both offline/online networks and
-local image selection. It also accepts `--compose /path/to/docker-compose` for
+local image selection, including loopback and remote port bindings.
+Browser URL regression checks use Node.js and run independently of the Python
+application dependencies:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_container_proxy.py' -v
+```
+
+The Compose checker also accepts `--compose /path/to/docker-compose` for
 a standalone Compose binary and does not require a daemon.
 
 The Container desktop CI workflow builds **both** local variants on CPU runners,

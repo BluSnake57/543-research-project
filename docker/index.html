@@ -10,9 +10,19 @@
 </style>
 <h1>Sentinel-X</h1>
 <ul>
-  <li><a href="/vnc.html?autoconnect=true&amp;resize=scale&amp;path=websockify">Open desktop</a></li>
-  <li><a href="/exports/">Download exported conversations</a></li>
+  <li><a id="desktop-link" href="./vnc.html?autoconnect=true&amp;resize=scale&amp;path=websockify">Open desktop</a></li>
+  <li><a href="./exports/">Download exported conversations</a></li>
 </ul>
 <p>Save conversations in the desktop’s <strong>Exports</strong> folder to download them here.</p>
 <p>Downloads use the username <strong>sentinel</strong> and your desktop password.</p>
+<script>
+  // Debian's noVNC interprets path relative to the host, not to vnc.html.
+  // Derive it from the public URL so a proxy can mount us at any directory.
+  const desktop = new URL(document.getElementById("desktop-link").href);
+  desktop.searchParams.set("path", new URL("websockify", window.location.href).pathname.slice(1));
+  desktop.searchParams.set("host", window.location.hostname);
+  desktop.searchParams.set("port", window.location.port || (window.location.protocol === "https:" ? "443" : "80"));
+  desktop.searchParams.set("encrypt", window.location.protocol === "https:" ? "true" : "false");
+  document.getElementById("desktop-link").href = desktop.href;
+</script>
 </html>

@@ -16,6 +16,8 @@ jobs:
         run: python3 scripts/create_container_secret.py
       - name: Validate local image and network configurations
         run: python3 scripts/check_container_config.py
+      - name: Check browser URLs for direct and reverse proxy access
+        run: python3 -m unittest discover -s tests -p 'test_container_proxy.py' -v
       - name: Select build and disable GPU reservation on this CPU runner
         env:
           VARIANT: ${{ matrix.variant }}

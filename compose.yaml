@@ -7,7 +7,7 @@ services:
     image: sentinel-x-desktop:local-cuda
     pull_policy: never
     ports:
-      - "127.0.0.1:${NOVNC_PORT:-6080}:6080"
+      - "${NOVNC_BIND_ADDRESS:-127.0.0.1}:${NOVNC_PORT:-6080}:6080"
     environment:
       DESKTOP_SIZE: "${DESKTOP_SIZE:-1600x900}"
       OMP_NUM_THREADS: "${COMPUTE_THREADS:-4}"

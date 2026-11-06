@@ -2,13 +2,14 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def validate(config, *, cpu, online):
+def validate(config, *, cpu, online, bind_address="127.0.0.1", port="6080"):
     desktop = config["services"]["desktop"]
     variant = "cpu" if cpu else "cuda"
     assert desktop["image"] == f"sentinel-x-desktop:local-{variant}"
@@ -23,7 +24,11 @@ def validate(config, *, cpu, online):
     )
     assert bool(devices) == (not cpu), "Wrong GPU reservation"
     assert config["networks"]["desktop"].get("internal", False) == (not online)
-    assert desktop["ports"][0]["host_ip"] == "127.0.0.1"
+    assert len(desktop["ports"]) == 1, "Only HTTP/WebSocket should be published"
+    published = desktop["ports"][0]
+    assert published["host_ip"] == bind_address
+    assert str(published["published"]) == port
+    assert published["target"] == 6080
     assert desktop["read_only"] and desktop["user"] == "1000:1000"
     mounts = {mount["target"]: mount for mount in desktop["volumes"]}
     assert mounts["/home/sentinel"]["type"] == "volume"
@@ -46,11 +51,21 @@ def main():
             if online:
                 files.append("compose.online.yaml")
             invocation = command + [arg for file in files for arg in ("-f", file)]
-            output = subprocess.check_output(
-                invocation + ["config", "--format", "json"], cwd=ROOT, text=True
-            )
-            validate(json.loads(output), cpu=cpu, online=online)
-            print(f"Validated {' + '.join(files)}")
+            for bind_address, port in (("127.0.0.1", "6080"), ("0.0.0.0", "7080")):
+                output = subprocess.check_output(
+                    invocation + ["config", "--format", "json"],
+                    cwd=ROOT,
+                    text=True,
+                    env={**os.environ, "NOVNC_BIND_ADDRESS": bind_address, "NOVNC_PORT": port},
+                )
+                validate(
+                    json.loads(output),
+                    cpu=cpu,
+                    online=online,
+                    bind_address=bind_address,
+                    port=port,
+                )
+                print(f"Validated {' + '.join(files)} at {bind_address}:{port}")
 
 
 if __name__ == "__main__":

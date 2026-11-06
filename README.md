@@ -13,6 +13,9 @@ Separate local images include a password-protected browser desktop, authenticate
 conversation downloads, and persistent Scope settings/model storage. Downloads
 require opt-in networking; no application images are published or pulled.
 Container builds and real-model memory fit still require Docker-host validation.
+For a remote server or Nginx Proxy Manager, see
+[remote browser access](docs/container.md#remote-access-and-nginx-proxy-manager)
+and configure `NOVNC_BIND_ADDRESS` and `NOVNC_PORT` on the server.
 See [setup.md](setup.md) for prerequisites, model downloads, and checkpoint setup.
 
 Project layout: application code is in `src/backend/sentinel_x/`, automation in
