@@ -315,7 +315,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--device",
-        choices=("cpu", "cuda"),
+        choices=("cpu", "cuda", "rocm"),
         help="Scope device; CPU is an explicit, slower fallback requiring more memory",
     )
     parser.add_argument(
@@ -324,7 +324,7 @@ def main(argv=None):
     parser.add_argument(
         "--cpu-offload",
         choices=("none", "sae", "modules"),
-        help="CUDA CPU-offload policy; omitted preserves the current choice",
+        help="CUDA/ROCm CPU-offload policy; omitted preserves the current choice",
     )
     parser.add_argument(
         "--download-both",

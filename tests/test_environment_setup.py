@@ -259,6 +259,18 @@ class EnvironmentSetupTests(unittest.TestCase):
 
 
 class ScopeSetupOptionsTests(unittest.TestCase):
+    def test_rocm_device_selection_is_saved_and_preserved_on_rerun(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights"
+            source.mkdir()
+            store = Store(root / "data")
+            args = ["--configure-only", "--data-dir", str(store.root), "--weights-dir", str(source)]
+            self.assertEqual(setup.main([*args, "--device", "rocm", "--cpu-offload", "sae"]), 0)
+            self.assertEqual(setup.main(args), 0)
+            self.assertEqual(store.setting("scope_device"), "rocm")
+            self.assertEqual(store.setting("scope_offload"), "sae")
+
     def test_rerun_preserves_selections_and_download_both_does_not_activate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

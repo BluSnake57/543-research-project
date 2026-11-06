@@ -11,7 +11,15 @@ from .config import manifest, model_profile
 from .scope import Capture, resolve_hook, validate_sae
 
 
+def tensor_device(device):
+    """ROCm PyTorch deliberately exposes HIP GPUs through its CUDA interface."""
+    if device not in ("cuda", "rocm", "cpu"):
+        raise ValueError("Choose CUDA, ROCm, or the explicit slower CPU fallback in Models")
+    return "cpu" if device == "cpu" else "cuda"
+
+
 def placement(device, offload, profile):
+    tensor_device(device)
     if device == "cpu":
         return "cpu", "cpu"
     if offload not in ("none", "sae", "modules"):
@@ -32,8 +40,7 @@ def preflight(device, context=8192, model="9b", offload="none"):
     import torch
 
     model_profile(model)
-    if device not in ("cuda", "cpu"):
-        raise ValueError("Choose CUDA or the explicit slower CPU fallback in Models")
+    tensor_device(device)
     # Admission estimates are intentionally distinct from measured peak-memory claims.
     cpu_required = (12 if model == "9b" else 6) + context / 8192
     gpu_required = (9 if model == "9b" else 3.5) + context / 8192
@@ -41,24 +48,59 @@ def preflight(device, context=8192, model="9b", offload="none"):
         gpu_required -= 1 if model == "9b" else 0.25
     if offload == "modules":
         gpu_required = (4.3 if model == "9b" else 2.5) + context / 8192
-    if device == "cuda":
+    if device != "cpu":
+        backend = "ROCm" if device == "rocm" else "CUDA"
+        if device == "rocm" and not torch.version.hip:
+            raise ValueError(
+                "ROCm is unavailable in this PyTorch build. Install ROCm-enabled PyTorch "
+                "and compatible bitsandbytes; see docs/ROCM.md."
+            )
+        if device == "cuda" and torch.version.hip:
+            raise ValueError("This PyTorch build uses ROCm. Select ROCm in Models for AMD GPUs.")
         if not torch.cuda.is_available():
             raise ValueError(
-                "CUDA is unavailable. Repair the NVIDIA driver or explicitly select CPU."
+                f"{backend} is unavailable. Check the GPU driver and device permissions, "
+                "or explicitly select CPU."
             )
         available, _ = torch.cuda.mem_get_info()
         if gpu_required > min(5.5, available / 1024**3):
             raise ValueError(
-                "Insufficient CUDA memory within the 6 GiB limit. Use CPU offloading, "
+                f"Insufficient {backend} memory within the 6 GiB limit. Use CPU offloading, "
                 "reduce context, or select the 2B fallback."
             )
         if not torch.cuda.is_bf16_supported():
-            raise ValueError("CUDA BF16 support is required; select CPU on this device.")
+            raise ValueError(f"{backend} BF16 support is required; select CPU on this device.")
     if cpu_required > min(15, psutil.virtual_memory().available / 1024**3):
         raise ValueError(
             "Insufficient CPU memory within the 16 GiB limit; select 2B or reduce context."
         )
-    return torch.bfloat16 if device == "cuda" else torch.float32
+    return torch.bfloat16 if device != "cpu" else torch.float32
+
+
+def check_quantization(device, dtype):
+    """Exercise the actual NF4 kernel before loading large model files."""
+    import torch
+
+    target = tensor_device(device)
+    try:
+        from bitsandbytes.nn import Linear4bit
+
+        with torch.inference_mode():
+            layer = Linear4bit(
+                64, 64, bias=False, compute_dtype=dtype, compress_statistics=True, quant_type="nf4"
+            )
+            layer.weight.copy_(torch.eye(64))
+            layer = layer.to(target)
+            output = layer(torch.ones((1, 64), device=target, dtype=dtype))
+            if target == "cuda":
+                torch.cuda.synchronize()
+            if not torch.allclose(output, torch.ones_like(output), atol=0.05, rtol=0.05):
+                raise RuntimeError("NF4 identity projection returned incorrect values")
+    except Exception as exc:
+        raise ValueError(
+            f"{device.upper()} NF4 check failed. Check PyTorch, bitsandbytes, and GPU driver "
+            f"compatibility; see docs/ROCM.md. Details: {exc}"
+        ) from exc
 
 
 def parse_output(text, tools):
@@ -113,12 +155,14 @@ class Engine:
         self.config = config
         self.device = config["device"]
         profile = model_profile(config.get("model", "9b"))
-        offload = config.get("offload", "none") if self.device == "cuda" else "none"
+        offload = config.get("offload", "none") if self.device != "cpu" else "none"
         dtype = preflight(self.device, config["context"], config.get("model", "9b"), offload)
         device_map, sae_device = placement(self.device, offload, profile)
-        if self.device == "cuda":
+        if self.device != "cpu":
             total = torch.cuda.get_device_properties(0).total_memory
             torch.cuda.set_per_process_memory_fraction(min(1.0, 5.5 * 1024**3 / total))
+        if self.device == "rocm":
+            check_quantization(self.device, dtype)
         root = Path(config["root"])
         self.catalog = manifest()
         models = Models(Store(root), self.catalog)
@@ -179,6 +223,7 @@ class Engine:
     def generate(self, request, send, cancelled):
         import torch
 
+        execution_device = tensor_device(self.device)
         thinking = request["thinking"]
         # The pinned template expects argument mappings, while the app stores JSON strings.
         messages = json.loads(json.dumps(request["messages"]))
@@ -229,7 +274,7 @@ class Engine:
                     chunk = prompt_ids[start : start + 256]
                     capture.prepare(chunk, ["prompt"] * len(chunk))
                     result = self.model(
-                        input_ids=torch.tensor([chunk], device=self.device),
+                        input_ids=torch.tensor([chunk], device=execution_device),
                         past_key_values=cache,
                         use_cache=True,
                         logits_to_keep=1,
@@ -249,7 +294,7 @@ class Engine:
                         return
                     if step:
                         result = self.model(
-                            input_ids=ids.to(self.device),
+                            input_ids=ids.to(execution_device),
                             past_key_values=cache,
                             use_cache=True,
                             logits_to_keep=1,

@@ -134,8 +134,9 @@ class ScopeMathTests(unittest.TestCase):
 
 
 class WorkerGenerationTests(unittest.TestCase):
-    def generate(self, tokens, thinking=False, cancelled=None, max_tokens=10):
+    def generate(self, tokens, thinking=False, cancelled=None, max_tokens=10, device="cpu"):
         engine = fixture_engine(tokens)
+        engine.device = device
         events = []
         engine.generate(
             {
@@ -150,6 +151,30 @@ class WorkerGenerationTests(unittest.TestCase):
         )
         self.assertEqual(len(engine.layer._forward_hooks), 0)
         return engine, events
+
+    def test_rocm_generation_uses_cuda_tensors_but_saves_rocm_provenance(self):
+        original_tensor, original_to = torch.tensor, torch.Tensor.to
+        requested = []
+
+        def tensor(*args, **kwargs):
+            if kwargs.get("device") == "cuda":
+                requested.append("cuda")
+                kwargs["device"] = "cpu"
+            return original_tensor(*args, **kwargs)
+
+        def move(value, *args, **kwargs):
+            if args and args[0] == "cuda":
+                requested.append("cuda")
+                args = ("cpu", *args[1:])
+            return original_to(value, *args, **kwargs)
+
+        with patch("torch.tensor", side_effect=tensor), patch.object(torch.Tensor, "to", move):
+            _, events = self.generate([4, 9], device="rocm")
+        record = [e["record"] for e in events if e["event"] == "scope"][-1]
+        self.assertEqual(record["device"], "rocm")
+        self.assertEqual(record["status"], "complete")
+        self.assertGreaterEqual(len(requested), 2)
+        self.assertEqual(events[-1]["message"]["content"], "answer")
 
     def test_same_execution_token_alignment_and_thinking_disabled(self):
         engine, events = self.generate([4, 9])
@@ -267,7 +292,7 @@ class WorkerGenerationTests(unittest.TestCase):
         self.assertEqual(last.past_key_values.get_seq_length(), 4)
 
     def test_preflight_rejects_memory_and_never_silently_falls_back(self):
-        with patch("torch.cuda.is_available", return_value=False):
+        with patch("torch.version.hip", None), patch("torch.cuda.is_available", return_value=False):
             with self.assertRaisesRegex(ValueError, "CUDA is unavailable"):
                 preflight("cuda")
         with patch("psutil.virtual_memory", return_value=SimpleNamespace(available=8 * 1024**3)):

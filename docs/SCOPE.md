@@ -13,21 +13,25 @@ The weights downloaded are the official Transformers weights; NF4 quantization
 with double quantization happens during loading, not during download. Download
 size therefore exceeds the eventual quantized resident weight size.
 
-Device choices are CPU and CUDA. CUDA placement choices are:
+Device choices are CPU, NVIDIA CUDA, and AMD ROCm. GPU placement choices are:
 
-- No CPU offloading: Qwen and the Scope encoder run on CUDA.
-- Scope SAE on CPU: generation stays on CUDA; bounded residual batches move to
+- No CPU offloading: Qwen and the Scope encoder run on the selected GPU backend.
+- Scope SAE on CPU: generation stays on the GPU; bounded residual batches move to
   CPU for sparse feature extraction.
 - Scope and selected Qwen modules on CPU: embeddings, output head and vision
-  modules stay on CPU; decoder layers and final normalization stay on CUDA.
+  modules stay on CPU; decoder layers and final normalization stay on the GPU.
   CPU-dispatched modules may be unquantized and consume substantial RAM.
 
 The offload preference is retained but inactive in CPU-only mode. Selection and
 placement changes stop the old worker. All generation requires Scope; changing
 placement never enables an uninstrumented chat runtime.
 
+ROCm requires a HIP-enabled PyTorch build and compatible bitsandbytes. The worker
+checks a small NF4 calculation before loading the full model and records the
+selected backend. See [ROCm setup and validation](ROCM.md).
+
 The target machine limits are 16 GiB system RAM and 6 GiB VRAM. Admission checks
-reserve headroom, CUDA allocator usage is limited to 5.5 GiB, and the parent
+reserve headroom, GPU allocator usage is limited to 5.5 GiB, and the parent
 monitors combined parent/worker RSS against 15 GiB. The RSS check is reactive,
 not an OS-enforced hard limit, and cannot guarantee that a brief loading peak
 will remain below the target. Estimates are not measured memory-fit results.
@@ -52,9 +56,10 @@ Settings reset clears model/device/offload preferences and preserves both pairs.
 Factory reset removes downloaded pairs within application storage. Obsolete
 GGUF and llama.cpp files are ignored and preserved during ordinary upgrades.
 
-Validation: 149 tests plus 10 subtests passed offline, including model selection,
-paired downloads, offload maps, activation math, capture, conversation storage,
-exports and existing retrieval/GraphSAGE tests. A real bitsandbytes 0.50.2 NF4
+Validation: 163 tests pass offline, including model selection, ROCm admission and
+device routing, paired downloads, offload maps, activation math, capture,
+conversation storage, exports and existing retrieval/GraphSAGE tests.
+A real bitsandbytes 0.50.2 NF4
 linear layer executed on CPU. Neither complete 9B nor complete 2B loading and
 inference has been measured against the memory targets. CUDA validation remains
 blocked by driver access. The earlier frozen startup check failed on a PyTorch

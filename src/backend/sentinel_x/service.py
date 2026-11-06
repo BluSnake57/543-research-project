@@ -66,8 +66,8 @@ class Service:
                 raise ValueError('Thinking budget must be between 64 and 2048 tokens')
             if key == 'context' and (not isinstance(value, int) or not 2048 <= value <= 32768):
                 raise ValueError('Context must be between 2048 and 32768')
-            if key == 'scope_device' and value not in ('cuda', 'cpu'):
-                raise ValueError('Scope device must be cuda or cpu')
+            if key == 'scope_device' and value not in ('cuda', 'rocm', 'cpu'):
+                raise ValueError('Scope device must be cuda, rocm, or cpu')
             if key == 'checkpoint' and value and (not isinstance(value, str) or not value.isalnum() or
                     not (self.store.root/'checkpoints'/f'{value}.json').is_file()):
                 raise ValueError('Checkpoint not found')

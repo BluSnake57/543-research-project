@@ -65,3 +65,26 @@ class ModelOptionsTests(unittest.TestCase):
             self.assertEqual(placement("cpu", "modules", profile), ("cpu", "cpu"))
         with self.assertRaises(ValueError):
             model_profile("4b")
+
+    def test_rocm_selection_keeps_offload_policy_and_stops_old_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = Service(Path(directory))
+            panel = RuntimePanel(service)
+            try:
+                with patch.object(service.runtime, "stop") as stop:
+                    panel.offload.setCurrentIndex(panel.offload.findData("modules"))
+                    panel.choice.setCurrentIndex(panel.choice.findData("rocm"))
+                    self.assertTrue(panel.offload.isEnabled())
+                    self.assertEqual(service.status()["scope_device"], "rocm")
+                    self.assertEqual(service.store.setting("scope_offload"), "modules")
+                    stop.assert_called()
+                    panel.choice.setCurrentIndex(panel.choice.findData("cpu"))
+                    self.assertFalse(panel.offload.isEnabled())
+                    panel.choice.setCurrentIndex(panel.choice.findData("rocm"))
+                    self.assertTrue(panel.offload.isEnabled())
+                    self.assertEqual(panel.offload.currentData(), "modules")
+            finally:
+                panel.timer.stop()
+                panel.close()
+                service.close()
+                service.jobs.shutdown(wait=True)

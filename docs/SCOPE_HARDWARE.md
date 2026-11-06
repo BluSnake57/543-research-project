@@ -1,7 +1,7 @@
 # Scope hardware investigation
 
-Updated 2026-11-05. Required deployment limits: 16 GiB CPU RAM or 6 GiB CUDA
-VRAM. These supersede the original 9B/full-precision implementation assumptions.
+Updated 2026-11-05. Required deployment limits: 16 GiB CPU RAM or 6 GiB GPU
+VRAM for CUDA or ROCm. These supersede the original 9B/full-precision implementation assumptions.
 
 ## Latest selection
 
@@ -34,7 +34,7 @@ and encoder bias are needed during feature measurement.
 ## Quantization candidate and acceptance
 
 Investigate Transformers + bitsandbytes NF4 with double quantization. Current
-upstream documentation supports NVIDIA CUDA and AVX2 x86 CPU backends. That
+upstream documentation supports NVIDIA CUDA, AMD ROCm, and AVX2 x86 CPU backends. That
 support does not establish this specific model's correctness, latency, or peak
 memory. Keep the SAE encoder float32 initially, and explicitly identify the
 language model as quantized in saved analysis provenance. Quantization changes
@@ -49,7 +49,7 @@ other weights remain unquantized. CPU backend temporary buffers can differ
 from CUDA. No claim that either target fits is justified until measured.
 
 Acceptance requires peak aggregate CPU memory below 16 GiB for the CPU profile,
-and peak device usage below the usable portion of a 6 GiB GPU for CUDA. Leave
+and peak device usage below the usable portion of a 6 GiB GPU for CUDA or ROCm. Leave
 headroom for the OS/display and reject oversized contexts. Test actual loading,
 generation, sparse capture, tool calls, semantic extraction, cancellation,
 reopening and export. Do not simply lower the existing preflight thresholds.
@@ -65,6 +65,11 @@ NVIDIA driver remains unavailable to PyTorch. The native CPU advertises AVX2.
 A source startup check passed. A frozen assistant was built, but its startup
 check failed loading torch/lib/libtorch_global_deps.so; packaging needs repair
 before release. Model artifacts were not downloaded for this investigation.
+
+The native application now also has an explicit ROCm device choice with the same
+offload policies and memory targets. See [ROCm setup and checks](ROCM.md). The
+current environment has CUDA PyTorch, so AMD kernel and full-model validation
+remain pending a compatible ROCm environment.
 
 ## Primary sources
 

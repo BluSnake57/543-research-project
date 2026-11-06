@@ -12,6 +12,7 @@ out/
 build/
 *.egg-info/
 .env
+.secrets/
 .env.*
 !.env.example
 /.codex/

@@ -5,6 +5,8 @@ Models offers both 9B and 2B paired downloads and explicit CPU offloading.
 See [Scope configuration and validation status](docs/SCOPE.md). Memory fit and
 full-model execution are not yet validated; release packaging remains unfinished.
 
+AMD GPU execution is selectable through ROCm; see [ROCm setup and checks](docs/ROCM.md).
+
 **Quick start:** run `python run.py setup`, then `python run.py`
 (use `python3` on Linux/macOS or `py -3.13` on Windows).
 See [setup.md](setup.md) for prerequisites, model downloads, and checkpoint setup.
