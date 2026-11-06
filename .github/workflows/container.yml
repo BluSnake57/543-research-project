@@ -5,6 +5,10 @@ permissions:
 jobs:
   desktop:
     runs-on: ubuntu-latest
+    env:
+      CONTAINER_CPUS: "2"
+      CONTAINER_MEMORY: 4g
+      COMPUTE_THREADS: "2"
     steps:
       - uses: actions/checkout@v4
       - name: Create local desktop password

@@ -212,7 +212,10 @@ Install Ruff with the existing `requirements-dev.txt` when using a host developm
 environment. Container files live in `docker/`, the Compose manifests and Dockerfile
 are at the repository root, password-generation tests live in `tests/`, and the
 container CI workflow builds the CPU variation and checks desktop isolation and
-persistence. A CUDA wheel build and desktop smoke test can run on a CPU host;
+persistence. Both the desktop and publishing smoke tests use 2 CPUs, 4 GiB of RAM,
+and 2 compute threads through job environment variables so their limits fit the
+GitHub runner. Deployment defaults and `.env` overrides are independent of these
+CI limits. A CUDA wheel build and desktop smoke test can run on a CPU host;
 the actual CUDA calculation still requires NVIDIA hardware.
 
 ## Published images and Compose integration
