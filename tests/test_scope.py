@@ -364,6 +364,21 @@ class ScopeIntegrationTests(unittest.TestCase):
             runtime.receive(self.job)
         runtime.process = None
 
+    def test_structured_output_accepts_fences_and_retries_malformed_output(self):
+        runtime = self.service.runtime
+        with patch.object(
+            runtime,
+            "_generate",
+            side_effect=[
+                {"content": "{bad"},
+                {"content": '```json\n{"value":1}\n```'},
+            ],
+        ) as generate:
+            self.assertEqual(runtime.structured("extract", self.job), {"value": 1})
+            self.assertEqual(generate.call_count, 2)
+            self.assertEqual(generate.call_args.args[0][1]["content"], "extract")
+        self.assertEqual(self.job.data["structured_output_retries"][-1]["reason"], "invalid_json")
+
     def test_structured_json_validation_and_auxiliary_boundary(self):
         runtime = self.service.runtime
         for text in ("[]", "", "{bad"):
