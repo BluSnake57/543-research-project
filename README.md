@@ -5,13 +5,16 @@ Models offers both 9B and 2B paired downloads and explicit CPU offloading.
 See [Scope configuration and validation status](docs/SCOPE.md). Memory fit and
 full-model execution are not yet validated; release packaging remains unfinished.
 
+AMD GPU execution is selectable through ROCm; see [ROCm setup and checks](docs/ROCM.md).
+
 **Quick start:** run `python run.py setup`, then `python run.py`
 (use `python3` on Linux/macOS or `py -3.13` on Windows).
 
 **Docker desktop:** [Build locally for CPU or NVIDIA CUDA](docs/container.md).
 Separate local images include a password-protected browser desktop, authenticated
-conversation downloads, and persistent Scope settings/model storage. Downloads
-require opt-in networking; no application images are published or pulled.
+conversation downloads, and persistent Scope settings/model storage. Networking
+is enabled by default for remote access and model downloads;
+no application images are published or pulled.
 Container builds and real-model memory fit still require Docker-host validation.
 For a remote server or Nginx Proxy Manager, see
 [remote browser access](docs/container.md#remote-access-and-nginx-proxy-manager)
@@ -653,5 +656,8 @@ The final result is a working local research application that connects:
 Fifteen user-workflow model evaluations are prepared under
 `datasets/twitter16-model-cases/`, with source posts, user requests, hidden outcomes,
 and reviewer scorecards. See [model evaluation and pass/fail guidelines](docs/TWITTER16_VALIDATION.md)
-for Qwen analysis, GraphSAGE prediction, and end-to-end assessment. The full
-Twitter16 corpus remains available in `datasets/twitter16-suite/` for aggregate scoring.
+for Qwen analysis, GraphSAGE prediction, and end-to-end assessment. In the main
+app, choose **Import posts → Twitter15 / Twitter16 input folder…**, select a
+case's `input/` folder, and wait for its cascade to be attached to the conversation.
+The Trainer is not required. When prepared locally, the larger Twitter16 corpus
+under `datasets/twitter16-suite/` supports aggregate scoring.

@@ -4,6 +4,16 @@ The assistant uses three primary destinations: Chat, Evidence, and Settings. Mod
 
 ## Chat and thinking
 
+**Import posts** offers **Twitter15 / Twitter16 input folder…** for native data
+and evaluation case `input/` folders, and **JSON / JSONL file…** for post files.
+Native imports validate cascades in the background and attach successful ones
+to the originating conversation. The dataset drawer opens with them checked;
+switching conversations during import saves those attachments in the original
+draft. Reimporting the same native cascade updates it without a duplicate.
+Rejected cascades are counted in the completion message with details in
+Background work. Native imports require no Trainer, model inference, or field
+mapping. JSON/JSONL imports retain their preview and field-mapping dialog.
+
 The conversation list and dataset drawer can be collapsed. At narrow widths, opening either panel closes the other to preserve composer space. Drafts and attachments belong to individual conversations.
 
 ![Chat with illustrative messages and generation progress](screenshots/chat.png)

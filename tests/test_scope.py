@@ -23,9 +23,24 @@ from sentinel_x.state import Store
 
 
 class Tokenizer:
+    # Qwen's tokenizer ends a chat turn with a different token from the model
+    # config's end-of-text token when no generation_config.json is installed.
+    eos_token_id = 12
+
     def decode(self, ids, **kwargs):
         return "".join(
-            {3: "reason", 4: "answer", 8: "</think>", 9: "<end>"}.get(i, f"[{i}]") for i in ids
+            {
+                3: "reason",
+                4: "answer",
+                5: '{"score":0.95}',
+                6: "\n",
+                8: "</think>",
+                9: "<end>",
+                12: "<|im_end|>",
+                13: "<tool_call><function=lookup><parameter=query>Mars</parameter></function></tool_call>",
+                14: '{"text":"<|im_end|>"}',
+            }.get(i, f"[{i}]")
+            for i in ids
         )
 
     def convert_tokens_to_ids(self, text):
@@ -134,8 +149,9 @@ class ScopeMathTests(unittest.TestCase):
 
 
 class WorkerGenerationTests(unittest.TestCase):
-    def generate(self, tokens, thinking=False, cancelled=None, max_tokens=10):
+    def generate(self, tokens, thinking=False, cancelled=None, max_tokens=10, device="cpu"):
         engine = fixture_engine(tokens)
+        engine.device = device
         events = []
         engine.generate(
             {
@@ -150,6 +166,106 @@ class WorkerGenerationTests(unittest.TestCase):
         )
         self.assertEqual(len(engine.layer._forward_hooks), 0)
         return engine, events
+
+    def test_tokenizer_turn_end_stops_before_control_token_reaches_json_parser(self):
+        engine, events = self.generate([5, 12, 6, 9])
+        answer = events[-1]["message"]["content"]
+        self.assertEqual(json.loads(answer), {"score": 0.95})
+        self.assertEqual(engine.model.inputs, [10, 11, 5, 12])
+        saved = [e["record"] for e in events if e["event"] == "scope"][-1]
+        self.assertEqual(saved["tokens"][-1]["phase"], "boundary")
+        self.assertEqual(saved["tokens"][-1]["token_id"], 12)
+        self.assertFalse(saved["output_truncated"])
+        self.assertEqual(saved["finish_reason"], "stop")
+        self.assertEqual(saved["output_text"], answer)
+        self.assertEqual(saved["thinking_text"], "")
+        self.assertEqual(saved["stop_token_ids"], [9, 12])
+        self.assertFalse(any("<|im_end|>" in e["text"] for e in events if e["event"] == "piece"))
+
+    def test_turn_end_preserves_thinking_boundary(self):
+        _, events = self.generate([3, 8, 5, 12], thinking=True)
+        self.assertEqual(json.loads(events[-1]["message"]["content"]), {"score": 0.95})
+        self.assertEqual(
+            "".join(e["text"] for e in events if e["event"] == "piece" and e["reasoning"]), "reason"
+        )
+
+    def test_literal_control_token_text_inside_json_is_not_removed(self):
+        _, events = self.generate([14, 12, 9])
+        self.assertEqual(json.loads(events[-1]["message"]["content"]), {"text": "<|im_end|>"})
+
+    def test_turn_end_does_not_strip_tool_call_tags(self):
+        engine = fixture_engine([13, 12, 9])
+        events = []
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "parameters": {
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            }
+        ]
+        engine.generate(
+            {
+                "messages": [{"role": "user", "content": "lookup Mars"}],
+                "tools": tools,
+                "thinking": False,
+                "kind": "response",
+                "max_tokens": 5,
+            },
+            lambda event: events.append(copy.deepcopy(event)),
+            threading.Event(),
+        )
+        message = events[-1]["message"]
+        self.assertEqual(message["content"], "")
+        self.assertEqual(
+            json.loads(message["tool_calls"][0]["function"]["arguments"]), {"query": "Mars"}
+        )
+
+    def test_generation_eos_list_is_combined_with_tokenizer_eos(self):
+        for stop in (9, 12):
+            engine = fixture_engine([5, stop, 6])
+            engine.model.generation_config.eos_token_id = [9]
+            events = []
+            engine.generate(
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "tools": [],
+                    "thinking": False,
+                    "kind": "auxiliary",
+                    "max_tokens": 4,
+                },
+                lambda event: events.append(copy.deepcopy(event)),
+                threading.Event(),
+            )
+            self.assertEqual(json.loads(events[-1]["message"]["content"]), {"score": 0.95})
+
+    def test_rocm_generation_uses_cuda_tensors_but_saves_rocm_provenance(self):
+        original_tensor, original_to = torch.tensor, torch.Tensor.to
+        requested = []
+
+        def tensor(*args, **kwargs):
+            if kwargs.get("device") == "cuda":
+                requested.append("cuda")
+                kwargs["device"] = "cpu"
+            return original_tensor(*args, **kwargs)
+
+        def move(value, *args, **kwargs):
+            if args and args[0] == "cuda":
+                requested.append("cuda")
+                args = ("cpu", *args[1:])
+            return original_to(value, *args, **kwargs)
+
+        with patch("torch.tensor", side_effect=tensor), patch.object(torch.Tensor, "to", move):
+            _, events = self.generate([4, 9], device="rocm")
+        record = [e["record"] for e in events if e["event"] == "scope"][-1]
+        self.assertEqual(record["device"], "rocm")
+        self.assertEqual(record["status"], "complete")
+        self.assertGreaterEqual(len(requested), 2)
+        self.assertEqual(events[-1]["message"]["content"], "answer")
 
     def test_same_execution_token_alignment_and_thinking_disabled(self):
         engine, events = self.generate([4, 9])
@@ -266,13 +382,12 @@ class WorkerGenerationTests(unittest.TestCase):
         torch.testing.assert_close(outputs[0], torch.cat(outputs[1:], dim=1), atol=1e-6, rtol=1e-5)
         self.assertEqual(last.past_key_values.get_seq_length(), 4)
 
-    def test_preflight_rejects_memory_and_never_silently_falls_back(self):
-        with patch("torch.cuda.is_available", return_value=False):
+    def test_preflight_checks_backend_without_estimated_memory_rejection(self):
+        with patch("torch.version.hip", None), patch("torch.cuda.is_available", return_value=False):
             with self.assertRaisesRegex(ValueError, "CUDA is unavailable"):
                 preflight("cuda")
         with patch("psutil.virtual_memory", return_value=SimpleNamespace(available=8 * 1024**3)):
-            with self.assertRaisesRegex(ValueError, "Insufficient CPU memory"):
-                preflight("cpu")
+            self.assertEqual(preflight("cpu"), torch.float32)
         with patch("psutil.virtual_memory", return_value=SimpleNamespace(available=64 * 1024**3)):
             self.assertEqual(preflight("cpu"), torch.float32)
 
@@ -314,6 +429,19 @@ class ScopeIntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "without Scope"):
                 runtime.stream([], [], self.job)
 
+    def test_actual_allocation_error_is_reported_from_worker(self):
+        runtime = self.service.runtime
+        runtime.process = Mock()
+        runtime.connection = Mock()
+        runtime.connection.poll.return_value = True
+        runtime.connection.recv.return_value = {
+            "event": "error",
+            "message": "HIP out of memory. Tried to allocate 2 GiB.",
+        }
+        with self.assertRaisesRegex(ValueError, "HIP out of memory"):
+            runtime.receive(self.job)
+        runtime.process = runtime.connection = None
+
     def test_invalid_or_empty_ipc_is_actionable(self):
         runtime = self.service.runtime
         runtime.process = Mock(pid=__import__("os").getpid())
@@ -326,6 +454,21 @@ class ScopeIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "exited unexpectedly"):
             runtime.receive(self.job)
         runtime.process = None
+
+    def test_structured_output_accepts_fences_and_retries_malformed_output(self):
+        runtime = self.service.runtime
+        with patch.object(
+            runtime,
+            "_generate",
+            side_effect=[
+                {"content": "{bad"},
+                {"content": '```json\n{"value":1}\n```'},
+            ],
+        ) as generate:
+            self.assertEqual(runtime.structured("extract", self.job), {"value": 1})
+            self.assertEqual(generate.call_count, 2)
+            self.assertEqual(generate.call_args.args[0][1]["content"], "extract")
+        self.assertEqual(self.job.data["structured_output_retries"][-1]["reason"], "invalid_json")
 
     def test_structured_json_validation_and_auxiliary_boundary(self):
         runtime = self.service.runtime

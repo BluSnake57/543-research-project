@@ -171,7 +171,12 @@ class Window(CheckpointControls, QMainWindow):
         self.draft_timer = QTimer(self); self.draft_timer.setSingleShot(True); self.draft_timer.setInterval(350)
         self.draft_timer.timeout.connect(lambda: self.run(self.save_draft))
         self.message_input.textChanged.connect(self.draft_changed)
-        row = QHBoxLayout(); row.addWidget(self.button('Import posts', self.import_posts))
+        row = QHBoxLayout()
+        self.import_posts_button = QPushButton('Import posts')
+        import_menu = QMenu(self.import_posts_button)
+        import_menu.addAction('Twitter15 / Twitter16 input folder…', lambda: self.run(self.import_twitter_posts))
+        import_menu.addAction('JSON / JSONL file…', lambda: self.run(self.import_posts))
+        self.import_posts_button.setMenu(import_menu); row.addWidget(self.import_posts_button)
         self.thinking = QCheckBox('Thinking · Off'); self.thinking.setAccessibleName('Thinking')
         self.thinking.setObjectName('thinkingSwitch')
         self.thinking.setToolTip('Think before answering. Responses may take longer. Changes apply to the next request.')
@@ -424,9 +429,39 @@ class Window(CheckpointControls, QMainWindow):
     def import_posts(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Import posts', '', 'Post datasets (*.json *.jsonl)')
         if path:
+            if not self.conversation: self.new_conversation()
             target = self.conversation
             self.watch(self.service.preview_posts(path), lambda preview: self.import_preview(path, preview, target))
             self.notice.setText('Reading dataset in the background…')
+
+    def attach_imported_graphs(self, ids, target):
+        # Complete against the originating conversation, even after navigation.
+        if self.conversation == target:
+            self.attached.update(ids); self.refresh_graphs(); self.save_draft()
+            if ids and self.attachments_panel.isHidden():
+                self.toggle_panel(self.attachments_panel, 'ui:attachments')
+        else:
+            draft = self.service.store.setting('draft:'+str(target), {})
+            draft['graph_ids'] = sorted(set(draft.get('graph_ids', [])) | set(ids))
+            self.service.store.configure('draft:'+str(target), draft)
+
+    def import_twitter_posts(self):
+        path = QFileDialog.getExistingDirectory(self, 'Import Twitter15/16 · choose the case input folder')
+        if not path: return
+        if not self.conversation: self.new_conversation()
+        target = self.conversation
+        ident = self.service.import_twitter(path)
+        def done(result):
+            self.attach_imported_graphs(result['graph_ids'], target)
+            count, rejected = result['imported'], len(result['errors'])
+            self.notice.setText(
+                f'Imported {count} cascade(s). Attached to the originating conversation.' if count else
+                'No cascades imported.'
+            )
+            if rejected:
+                self.notice.setText(self.notice.text()+f' {rejected} rejected · Open Background work for details.')
+        self.watch(ident, done)
+        self.notice.setText('Reading native Twitter dataset in the background…')
 
     def import_preview(self, path, preview, target):
         dialog = QDialog(self); dialog.setWindowTitle('Import posts'); dialog.resize(720, 540)
@@ -456,13 +491,7 @@ class Window(CheckpointControls, QMainWindow):
             import_button.setEnabled(False)
             error.setText('Validating and importing in the background…')
             def done(ids):
-                # Complete against the originating conversation, even after navigation.
-                if self.conversation == target:
-                    self.attached.update(ids); self.refresh_graphs(); self.save_draft()
-                else:
-                    draft = self.service.store.setting('draft:'+str(target), {})
-                    draft['graph_ids'] = sorted(set(draft.get('graph_ids', [])) | set(ids))
-                    self.service.store.configure('draft:'+str(target), draft)
+                self.attach_imported_graphs(ids, target)
                 self.notice.setText(f'Imported {preview["count"]} posts in {len(ids)} cascade(s). Attached to the originating conversation.')
                 dialog.accept()
             self.watch(job_id, done)
@@ -579,7 +608,7 @@ class Window(CheckpointControls, QMainWindow):
         layout.addWidget(advanced); advanced.hide()
         advanced_button.toggled.connect(advanced.setVisible)
         advanced_button.toggled.connect(lambda checked: advanced_button.setText('Advanced settings ▾' if checked else 'Advanced settings ▸'))
-        note = QLabel('Chat runs on this device. Quantized models use capped memory budgets. Offloading and the 2B fallback are available in Models; actual fit requires validation.')
+        note = QLabel('Chat runs on this device. Memory allocation failures are reported when loading or generating. Offloading and the 2B fallback are available in Models; actual fit requires validation.')
         note.setWordWrap(True); layout.addWidget(note); layout.addStretch()
 
     def open_trainer(self):

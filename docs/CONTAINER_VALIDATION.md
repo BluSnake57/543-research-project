@@ -4,6 +4,20 @@ Integration date: 2026-11-05. Branch: `feature/scope-docker-local`.
 Base: local Scope tip `876099d` (one commit ahead of fetched Scope `b39676c`,
 without divergence). Merged Docker tip: `551e9ad`. Existing branches were not moved.
 
+## Online deployment and Scope merge (2026-11-06)
+
+Merged `origin/feature/qwen-scope-explanations` at `40d6e6e`. The main Compose
+configuration now enables external networking and publishes `0.0.0.0:36080` to
+container port 6080; the separate online override is removed. CPU/CUDA defaults
+and explicit bind/port overrides pass the Compose checker. Browser URL regression
+checks and repository Python lint pass. Of 191 application tests, 188 passed in
+the cached CPU image with repository-pinned psutil, bitsandbytes, Accelerate, and
+safetensors installed temporarily. Three Git-recovery tests could not run in
+that image because Git is absent; all three passed separately on the host.
+This checks merged source, not a fresh image build or real GPU inference.
+The historical results below describe
+the earlier offline-default configuration.
+
 ## Passed in the integration workspace
 
 - `QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v`:

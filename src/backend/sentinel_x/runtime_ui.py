@@ -38,6 +38,7 @@ class RuntimePanel(QWidget):
         self.choice = QComboBox()
         self.choice.setAccessibleName("Scope device")
         self.choice.addItem("CUDA · 4-bit NF4", "cuda")
+        self.choice.addItem("ROCm · AMD · 4-bit NF4", "rocm")
         self.choice.addItem("CPU · 4-bit NF4, slower", "cpu")
         self.choice.setCurrentIndex(
             self.choice.findData(service.store.setting("scope_device", "cuda"))
@@ -76,10 +77,11 @@ class RuntimePanel(QWidget):
         from .config import model_profile
 
         ready = self.service.models.status()
-        self.offload.setEnabled(self.choice.currentData() == "cuda")
+        self.offload.setEnabled(self.choice.currentData() in ("cuda", "rocm"))
         self.inventory.setText(
             f"Available RAM: {psutil.virtual_memory().available / 1024**3:.1f} GiB. "
-            "CUDA availability and memory are checked in the worker before loading.\n"
+            "CUDA/ROCm availability and memory are checked in the worker before loading. "
+            "ROCm requires ROCm-enabled PyTorch and compatible bitsandbytes.\n"
             + "\n".join(
                 f"{key}: {'downloaded' if ready[key]['ready'] else 'download required'}"
                 for key in model_profile(self.service.store.setting("scope_model", "9b"))["keys"]

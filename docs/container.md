@@ -37,21 +37,21 @@ docker compose -f compose.yaml -f compose.cpu.yaml up --no-build --wait -d
 Compose uses distinct local tags and [`pull_policy: never`](https://docs.docker.com/reference/compose-file/services/#pull_policy).
 Build before the first launch; `up --no-build` requires that local image.
 Base images, OS packages, and Python dependencies can still download during a
-build. The container's offline network setting does not isolate the build process.
+build. The container network permits outbound connections and published-port access.
 There is no application-image publishing workflow or registry login step.
 
-Open <http://127.0.0.1:6080/> and choose **Open desktop**. Read the eight-character
+Open <http://SERVER_IP:36080/> and choose **Open desktop**. Read the eight-character
 password from `.secrets/vnc_password` and enter it in noVNC. The generator
 preserves existing passwords. The private, Git-ignored secret is mounted
 read-only; it is not embedded in the image or environment variables.
 
-The service defaults to the host's IPv4 loopback address. `127.0.0.1` in a
+The service defaults to all host interfaces on port 36080. `127.0.0.1` in a
 browser refers to the browser's own machine, not the remote server. For remote
 browser access or Nginx Proxy Manager, use the configuration below. An SSH tunnel
-is also available without changing the default bind address:
+is also available when binding the service to loopback:
 
 ```sh
-ssh -N -L 6080:127.0.0.1:6080 user@gpu-host
+ssh -N -L 36080:127.0.0.1:36080 user@gpu-host
 ```
 
 Sentinel-X starts automatically. Closing it leaves the desktop available; use
@@ -71,12 +71,12 @@ NOVNC_PORT=36080
 
 You can use the server's specific private/LAN IP instead of `0.0.0.0` to bind
 only that interface. This must be an address assigned to the Docker host.
-With the default `127.0.0.1` binding, changing only the port still leaves the
+With a `127.0.0.1` binding, changing only the port still leaves the
 service inaccessible from other machines or a separate proxy container.
 See [Docker's port publishing documentation](https://docs.docker.com/engine/network/port-publishing/).
 
 Rebuild to include the updated browser links, then recreate the service. Use the
-same CPU/online override files as your existing deployment; CUDA offline example:
+same CPU override file if applicable; CUDA example:
 
 ```sh
 docker compose build
@@ -168,21 +168,21 @@ doesn't connect, check WebSocket support: `/websockify` should return status
 
 ## Downloads, model selection, and offloading
 
-The default internal network disables Internet downloads. Enable egress explicitly
-for downloads, using the same variant files for every command. CUDA example:
+Networking is enabled by default, including Internet access for model downloads.
+Use the same variant files for every command. CUDA example:
 
 ```sh
 docker compose down
-docker compose -f compose.yaml -f compose.online.yaml up --no-build --wait -d
-docker compose -f compose.yaml -f compose.online.yaml exec desktop python scripts/setup_environment.py --configure-only --model 9b --device cuda --cpu-offload sae --download-models
+docker compose -f compose.yaml up --no-build --wait -d
+docker compose -f compose.yaml exec desktop python scripts/setup_environment.py --configure-only --model 9b --device cuda --cpu-offload sae --download-models
 ```
 
 CPU example (selects the smaller, explicit 2B fallback):
 
 ```sh
 docker compose -f compose.yaml -f compose.cpu.yaml down
-docker compose -f compose.yaml -f compose.cpu.yaml -f compose.online.yaml up --no-build --wait -d
-docker compose -f compose.yaml -f compose.cpu.yaml -f compose.online.yaml exec desktop python scripts/setup_environment.py --configure-only --model 2b --device cpu --download-models
+docker compose -f compose.yaml -f compose.cpu.yaml up --no-build --wait -d
+docker compose -f compose.yaml -f compose.cpu.yaml exec desktop python scripts/setup_environment.py --configure-only --model 2b --device cpu --download-models
 ```
 
 The setup command downloads the selected Qwen model, its matching official Scope
@@ -210,17 +210,21 @@ and need more disk space than quantized resident weights. All generation uses
 Scope. See [Scope behavior and provenance](SCOPE.md), including the limitations
 of applying base-trained SAEs to quantized conversational models.
 
-After downloads, restore isolation by removing and recreating the network:
+### Migrating an existing isolated network
+
+The online override has been removed; `compose.yaml` now uses `internal: false`.
+An existing internal network must be recreated once. Keep the same project name
+and include `compose.cpu.yaml` if applicable:
 
 ```sh
-# CUDA; include compose.cpu.yaml for CPU sessions.
-docker compose -f compose.yaml -f compose.online.yaml down
+docker compose down
 docker compose up --no-build --wait -d
 ```
 
-Do not add `--volumes`: downloads and preferences must remain in the home volume.
-Changing only the network YAML while the network exists does not reliably change
-its isolation setting; use `down` before switching online/offline.
+Do not add `--volumes`: downloads and preferences remain in the home volume.
+Remove `compose.online.yaml` from saved commands and `COMPOSE_FILE` settings.
+Existing `.env` values still take precedence: use `NOVNC_BIND_ADDRESS=0.0.0.0`
+and `NOVNC_PORT=36080` for direct LAN access.
 
 ## CPU/CUDA switching and updates
 
@@ -256,7 +260,7 @@ GraphSAGE CLI training supports `--device cuda`; the Trainer GUI runs CPU traini
 Use **Conversation actions → Export Markdown** and save under
 `/home/sentinel/Exports` (also linked from the desktop). On the browser landing
 page choose **Download exported conversations**, or visit
-<http://127.0.0.1:6080/exports/>. Log in as `sentinel` with the VNC password.
+<http://SERVER_IP:36080/exports/>. Log in as `sentinel` with the VNC password.
 
 The endpoint exposes only Exports, rejects symlinks and uploads, and accepts
 GET/HEAD. Files use `application/octet-stream` with `nosniff`; downloaded HTML
@@ -266,7 +270,6 @@ the noVNC session.
 ## Resource limits
 
 Edit `.env`, then run the selected variant's `up --no-build --force-recreate --wait -d`.
-Include the online override if keeping an online session.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
@@ -277,15 +280,15 @@ Include the online override if keeping an online session.
 | `CONTAINER_TMP_SIZE` | `1g` | `/tmp` capacity; consumes the RAM allowance too |
 | `CONTAINER_PIDS` | `512` | Maximum processes/threads |
 | `DESKTOP_SIZE` | `1600x900` | Virtual display resolution |
-| `NOVNC_BIND_ADDRESS` | `127.0.0.1` | Host bind address; use a private IP or `0.0.0.0` for remote/proxy access |
-| `NOVNC_PORT` | `6080` | Published host browser port, e.g. `36080` |
+| `NOVNC_BIND_ADDRESS` | `0.0.0.0` | Host bind address; use a private IP or `0.0.0.0` for remote/proxy access |
+| `NOVNC_PORT` | `36080` | Published host browser port, e.g. `36080` |
 
 The 16 GiB default is a configurable limit, **not a guarantee that 9B fits**.
 It includes the desktop, application, workers, caches, and temporary memory.
-Scope additionally applies its own admission checks and RAM/VRAM budgets;
-raising Docker's limit does not disable those application checks. CPU-offloaded
+Scope no longer applies a native inference memory admission limit; Docker's
+container memory limit still applies. CPU-offloaded
 modules can remain unquantized and consume substantial RAM. Use 2B, more
-appropriate offloading, or a smaller context if admission or loading fails.
+appropriate offloading, or a smaller context if loading fails.
 
 Docker limits do not cap VRAM, GPU utilization, inference tokens, or persistent
 volume disk usage. Thread defaults do not constrain every library. A full model
@@ -323,11 +326,11 @@ all Linux capabilities dropped, and `no-new-privileges`. `/tmp` and `/run` are
 bounded `noexec,nosuid,nodev` tmpfs mounts. Default seccomp and host container
 security profiles remain active. No Docker socket, host home, privileged mode,
 host networking, or host PID namespace is used. VNC listens on container loopback;
-only HTTP/WebSocket access is published, on host loopback by default or the
+only HTTP/WebSocket access is published, on all host interfaces by default or the
 configured `NOVNC_BIND_ADDRESS`.
 
-An internal network is not a firewall against every host service or peer
-container. The desktop user can modify its own data, and containers share the
+The online network permits access to reachable host services and peer containers.
+The desktop user can modify its own data, and containers share the
 host kernel and NVIDIA driver. Keep sensitive host directories unmounted; any
 optional dataset mount should be read-only. The build context allows application
 source, container support files, and exactly the shipped GraphSAGE `.pt`/`.json`
@@ -335,7 +338,7 @@ pair; local model weights, secrets, datasets, caches, and build outputs are excl
 
 ## Checks and validation status
 
-Routine operation (include the same variant/online files used at launch):
+Routine operation (include the same variant files used at launch):
 
 ```sh
 docker compose ps
@@ -363,7 +366,7 @@ python3 scripts/check_container_config.py
 git diff --check
 ```
 
-The Compose checker validates CPU/CUDA with both offline/online networks and
+The Compose checker validates CPU/CUDA with online networking and
 local image selection, including loopback and remote port bindings.
 Browser URL regression checks use Node.js and run independently of the Python
 application dependencies:

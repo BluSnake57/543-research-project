@@ -66,8 +66,8 @@ class Service:
                 raise ValueError('Thinking budget must be between 64 and 2048 tokens')
             if key == 'context' and (not isinstance(value, int) or not 2048 <= value <= 32768):
                 raise ValueError('Context must be between 2048 and 32768')
-            if key == 'scope_device' and value not in ('cuda', 'cpu'):
-                raise ValueError('Scope device must be cuda or cpu')
+            if key == 'scope_device' and value not in ('cuda', 'rocm', 'cpu'):
+                raise ValueError('Scope device must be cuda, rocm, or cpu')
             if key == 'checkpoint' and value and (not isinstance(value, str) or not value.isalnum() or
                     not (self.store.root/'checkpoints'/f'{value}.json').is_file()):
                 raise ValueError('Checkpoint not found')
@@ -296,12 +296,17 @@ class Service:
 
     def import_twitter(self, path):
         directory = Path(path)
+        # Evaluation cases keep the native data separate from evaluator references.
+        if (directory/'input'/'tree').is_dir(): directory = directory/'input'
         folders = [directory] if (directory/'tree').is_dir() else [directory/name
                    for name in ('twitter15', 'twitter16') if (directory/name/'tree').is_dir()]
         if not folders:
-            raise ValueError('Choose a Twitter15/16 directory or their parent')
+            raise ValueError("Choose a case's input folder containing tree/, a Twitter15/16 directory, or their parent")
+        for folder in folders:
+            if not all((folder/name).is_file() for name in ('source_tweets.txt', 'label.txt')):
+                raise ValueError('Native input folders must contain source_tweets.txt, label.txt, and tree/')
         def work(job):
-            result = {'imported': 0, 'errors': []}
+            result = {'imported': 0, 'errors': [], 'graph_ids': []}
             existing = {(g['source'], g['cascade_id']): g['id'] for g in self.store.graphs()}
             for folder in folders:
                 for graph in native_twitter(folder):
@@ -313,6 +318,8 @@ class Service:
                         if (folder.name, graph['cascade_id']) in existing:
                             graph['id'] = existing[(folder.name, graph['cascade_id'])]
                         self.store.save_graph(graph); result['imported'] += 1
+                        result['graph_ids'].append(graph['id'])
+                        existing[(folder.name, graph['cascade_id'])] = graph['id']
                     if result['imported'] % 25 == 0:
                         job.emit('importing', **result)
             return result

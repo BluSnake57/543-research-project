@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import uuid
 from pathlib import Path
 
@@ -11,7 +12,15 @@ from .config import manifest, model_profile
 from .scope import Capture, resolve_hook, validate_sae
 
 
+def tensor_device(device):
+    """ROCm PyTorch deliberately exposes HIP GPUs through its CUDA interface."""
+    if device not in ("cuda", "rocm", "cpu"):
+        raise ValueError("Choose CUDA, ROCm, or the explicit slower CPU fallback in Models")
+    return "cpu" if device == "cpu" else "cuda"
+
+
 def placement(device, offload, profile):
+    tensor_device(device)
     if device == "cpu":
         return "cpu", "cpu"
     if offload not in ("none", "sae", "modules"):
@@ -28,37 +37,56 @@ def placement(device, offload, profile):
 
 
 def preflight(device, context=8192, model="9b", offload="none"):
-    import psutil
     import torch
 
     model_profile(model)
-    if device not in ("cuda", "cpu"):
-        raise ValueError("Choose CUDA or the explicit slower CPU fallback in Models")
-    # Admission estimates are intentionally distinct from measured peak-memory claims.
-    cpu_required = (12 if model == "9b" else 6) + context / 8192
-    gpu_required = (9 if model == "9b" else 3.5) + context / 8192
-    if offload == "sae":
-        gpu_required -= 1 if model == "9b" else 0.25
-    if offload == "modules":
-        gpu_required = (4.3 if model == "9b" else 2.5) + context / 8192
-    if device == "cuda":
+    tensor_device(device)
+    if device != "cpu":
+        backend = "ROCm" if device == "rocm" else "CUDA"
+        if device == "rocm" and not torch.version.hip:
+            raise ValueError(
+                "ROCm is unavailable in this PyTorch build. Install ROCm-enabled PyTorch "
+                f"and compatible bitsandbytes in {sys.executable} "
+                f"(installed torch: {torch.__version__}). Selecting ROCm does not install it. "
+                "Use setup --device rocm --torch-index-url URL; see docs/ROCM.md. "
+                "No separate llama.cpp runner is needed."
+            )
+        if device == "cuda" and torch.version.hip:
+            raise ValueError("This PyTorch build uses ROCm. Select ROCm in Models for AMD GPUs.")
         if not torch.cuda.is_available():
             raise ValueError(
-                "CUDA is unavailable. Repair the NVIDIA driver or explicitly select CPU."
-            )
-        available, _ = torch.cuda.mem_get_info()
-        if gpu_required > min(5.5, available / 1024**3):
-            raise ValueError(
-                "Insufficient CUDA memory within the 6 GiB limit. Use CPU offloading, "
-                "reduce context, or select the 2B fallback."
+                f"{backend} is unavailable. Check the GPU driver and device permissions, "
+                "or explicitly select CPU."
             )
         if not torch.cuda.is_bf16_supported():
-            raise ValueError("CUDA BF16 support is required; select CPU on this device.")
-    if cpu_required > min(15, psutil.virtual_memory().available / 1024**3):
+            raise ValueError(f"{backend} BF16 support is required; select CPU on this device.")
+    return torch.bfloat16 if device != "cpu" else torch.float32
+
+
+def check_quantization(device, dtype):
+    """Exercise the actual NF4 kernel before loading large model files."""
+    import torch
+
+    target = tensor_device(device)
+    try:
+        from bitsandbytes.nn import Linear4bit
+
+        with torch.inference_mode():
+            layer = Linear4bit(
+                64, 64, bias=False, compute_dtype=dtype, compress_statistics=True, quant_type="nf4"
+            )
+            layer.weight.copy_(torch.eye(64))
+            layer = layer.to(target)
+            output = layer(torch.ones((1, 64), device=target, dtype=dtype))
+            if target == "cuda":
+                torch.cuda.synchronize()
+            if not torch.allclose(output, torch.ones_like(output), atol=0.05, rtol=0.05):
+                raise RuntimeError("NF4 identity projection returned incorrect values")
+    except Exception as exc:
         raise ValueError(
-            "Insufficient CPU memory within the 16 GiB limit; select 2B or reduce context."
-        )
-    return torch.bfloat16 if device == "cuda" else torch.float32
+            f"{device.upper()} NF4 check failed. Check PyTorch, bitsandbytes, and GPU driver "
+            f"compatibility; see docs/ROCM.md. Details: {exc}"
+        ) from exc
 
 
 def parse_output(text, tools):
@@ -113,12 +141,11 @@ class Engine:
         self.config = config
         self.device = config["device"]
         profile = model_profile(config.get("model", "9b"))
-        offload = config.get("offload", "none") if self.device == "cuda" else "none"
+        offload = config.get("offload", "none") if self.device != "cpu" else "none"
         dtype = preflight(self.device, config["context"], config.get("model", "9b"), offload)
         device_map, sae_device = placement(self.device, offload, profile)
-        if self.device == "cuda":
-            total = torch.cuda.get_device_properties(0).total_memory
-            torch.cuda.set_per_process_memory_fraction(min(1.0, 5.5 * 1024**3 / total))
+        if self.device == "rocm":
+            check_quantization(self.device, dtype)
         root = Path(config["root"])
         self.catalog = manifest()
         models = Models(Store(root), self.catalog)
@@ -179,6 +206,7 @@ class Engine:
     def generate(self, request, send, cancelled):
         import torch
 
+        execution_device = tensor_device(self.device)
         thinking = request["thinking"]
         # The pinned template expects argument mappings, while the app stores JSON strings.
         messages = json.loads(json.dumps(request["messages"]))
@@ -215,7 +243,12 @@ class Engine:
         in_tool = False
         prompt_length = len(prompt_ids)
         end_ids = self.model.generation_config.eos_token_id
-        end_ids = [end_ids] if isinstance(end_ids, int) else end_ids or []
+        end_ids = set([end_ids] if isinstance(end_ids, int) else end_ids or [])
+        # A model config can specify end-of-text while the chat tokenizer uses
+        # a distinct end-of-turn token (Qwen: <|im_end|>). Both end generation;
+        # neither belongs in answer JSON, streaming text, or the next prompt.
+        if self.tokenizer.eos_token_id is not None:
+            end_ids.add(self.tokenizer.eos_token_id)
         close_think = self.tokenizer.convert_tokens_to_ids("</think>")
         open_think = self.tokenizer.convert_tokens_to_ids("<think>")
         send({"event": "stage", "stage": "Processing prompt"})
@@ -229,7 +262,7 @@ class Engine:
                     chunk = prompt_ids[start : start + 256]
                     capture.prepare(chunk, ["prompt"] * len(chunk))
                     result = self.model(
-                        input_ids=torch.tensor([chunk], device=self.device),
+                        input_ids=torch.tensor([chunk], device=execution_device),
                         past_key_values=cache,
                         use_cache=True,
                         logits_to_keep=1,
@@ -249,7 +282,7 @@ class Engine:
                         return
                     if step:
                         result = self.model(
-                            input_ids=ids.to(self.device),
+                            input_ids=ids.to(execution_device),
                             past_key_values=cache,
                             use_cache=True,
                             logits_to_keep=1,
@@ -305,14 +338,16 @@ class Engine:
                     prompt_tokens=prompt_length,
                     generated_tokens=len(generated),
                     output_truncated=bool(generated and generated[-1] not in end_ids),
+                    stop_token_ids=sorted(end_ids),
+                    finish_reason="stop" if generated and generated[-1] in end_ids else "length",
+                    output_text=self.tokenizer.decode(answer_ids, skip_special_tokens=False),
+                    thinking_text=self.tokenizer.decode(thinking_ids, skip_special_tokens=False),
                 )
                 if capture.record["output_truncated"]:
                     capture.record["truncated"] = True
                 record = capture.finish()
                 send({"event": "scope", "record": record})
-                answer = parse_output(
-                    self.tokenizer.decode(answer_ids, skip_special_tokens=False), request["tools"]
-                )
+                answer = parse_output(capture.record["output_text"], request["tools"])
                 send({"event": "result", "message": answer})
         except Exception as exc:
             capture.record.update(status="failed", error=str(exc))

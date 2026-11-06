@@ -9,7 +9,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def validate(config, *, cpu, online, bind_address="127.0.0.1", port="6080"):
+def validate(config, *, cpu, bind_address="0.0.0.0", port="36080"):
     desktop = config["services"]["desktop"]
     variant = "cpu" if cpu else "cuda"
     assert desktop["image"] == f"sentinel-x-desktop:local-{variant}"
@@ -23,7 +23,9 @@ def validate(config, *, cpu, online, bind_address="127.0.0.1", port="6080"):
         desktop.get("deploy", {}).get("resources", {}).get("reservations", {}).get("devices", [])
     )
     assert bool(devices) == (not cpu), "Wrong GPU reservation"
-    assert config["networks"]["desktop"].get("internal", False) == (not online)
+    assert not config["networks"]["desktop"].get("internal", False), (
+        "Published ports require an external network"
+    )
     assert len(desktop["ports"]) == 1, "Only HTTP/WebSocket should be published"
     published = desktop["ports"][0]
     assert published["host_ip"] == bind_address
@@ -44,28 +46,24 @@ def main():
     args = parser.parse_args()
     command = [args.compose] if args.compose else ["docker", "compose"]
     for cpu in (False, True):
-        for online in (False, True):
-            files = ["compose.yaml"]
-            if cpu:
-                files.append("compose.cpu.yaml")
-            if online:
-                files.append("compose.online.yaml")
-            invocation = command + [arg for file in files for arg in ("-f", file)]
-            for bind_address, port in (("127.0.0.1", "6080"), ("0.0.0.0", "7080")):
-                output = subprocess.check_output(
-                    invocation + ["config", "--format", "json"],
-                    cwd=ROOT,
-                    text=True,
-                    env={**os.environ, "NOVNC_BIND_ADDRESS": bind_address, "NOVNC_PORT": port},
-                )
-                validate(
-                    json.loads(output),
-                    cpu=cpu,
-                    online=online,
-                    bind_address=bind_address,
-                    port=port,
-                )
-                print(f"Validated {' + '.join(files)} at {bind_address}:{port}")
+        files = ["compose.yaml"]
+        if cpu:
+            files.append("compose.cpu.yaml")
+        invocation = command + [arg for file in files for arg in ("-f", file)]
+        for bind_address, port in (("", ""), ("127.0.0.1", "6080"), ("0.0.0.0", "36080")):
+            output = subprocess.check_output(
+                invocation + ["config", "--format", "json"],
+                cwd=ROOT,
+                text=True,
+                env={**os.environ, "NOVNC_BIND_ADDRESS": bind_address, "NOVNC_PORT": port},
+            )
+            validate(
+                json.loads(output),
+                cpu=cpu,
+                bind_address=bind_address or "0.0.0.0",
+                port=port or "36080",
+            )
+            print(f"Validated {' + '.join(files)} at {bind_address or '0.0.0.0'}:{port or '36080'}")
 
 
 if __name__ == "__main__":

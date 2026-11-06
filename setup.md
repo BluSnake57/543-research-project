@@ -14,7 +14,8 @@ explicitly pass their flags. `python run.py setup --download-both` downloads bot
 model/SAE pairs and embeddings without changing the selected model.
 
 Setup also accepts `--model 9b` or `--model 2b`, `--download-models`,
-`--device cpu` or `--device cuda`, and `--cpu-offload none`, `sae`, or `modules`.
+`--device cpu`, `--device cuda`, or `--device rocm`, and
+`--cpu-offload none`, `sae`, or `modules`.
 For example:
 
 ```sh
@@ -24,6 +25,13 @@ python scripts/setup_environment.py --model 2b --device cpu --download-models
 Argument handling and download orchestration are tested offline; the full model
 download/loading workflow has not yet passed a real-model smoke test.
 The old `--runtime` option and GGUF import are removed.
+
+AMD GPUs use an explicitly selected ROCm PyTorch build. See
+[ROCm prerequisites, configuration, and checks](docs/ROCM.md) before selecting
+`--device rocm`. Use `--torch-index-url URL` to replace PyTorch from a compatible
+official ROCm wheel index. Explicit ROCm setup rejects a missing or CUDA-only
+build before installing the remaining dependencies; it verifies HIP again afterward.
+Selecting ROCm in Models changes the saved preference, not installed packages.
 
 `--skip-install` checks the environment and installs local GraphSAGE checkpoint
 pairs without reinstalling dependencies. Keep each original `.pt`/`.json` pair
@@ -45,8 +53,9 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
 .venv/bin/python -m pip check
 ```
 
-The requested limits are 16 GiB CPU RAM or 6 GiB CUDA VRAM. These are validation
-targets, not measured guarantees. CPU-only is explicit and slower; CUDA requires
-a functioning compatible NVIDIA driver. Offloading can reduce VRAM while raising
-RAM consumption. The application rejects configurations failing its memory
-checks; full loading peaks and latency remain to be measured.
+The native app imposes no estimated-memory admission checks, GPU allocator cap,
+or combined application/worker RAM budget. It attempts loading and generation
+and reports actual failures. Backend compatibility checks remain enabled. Use
+CPU offloading, a smaller model, or less context if an allocation fails. If the
+OS kills the worker, the app reports an unexpected worker exit rather than a
+Python allocation error. Full-model memory usage still needs measurement.
