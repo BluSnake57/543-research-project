@@ -73,7 +73,9 @@ The native application now also has an explicit ROCm device choice with the same
 offload policies and memory targets. See [ROCm setup and checks](ROCM.md). The
 native Fedora 45 environment now uses PyTorch 2.14.1+rocm7.2. BF16 matrix
 multiplication and the bitsandbytes NF4 diagnostic passed on the RX 9070 XT
-(`gfx1201`). Full-model AMD inference and memory validation remain pending.
+(`gfx1201`). A subsequent 9B/SAE Case 01 run completed semantic extraction and
+GraphSAGE prediction after correcting turn-end handling; see [SCOPE.md](SCOPE.md).
+Broader AMD inference and memory-target validation remain pending.
 
 ## Primary sources
 

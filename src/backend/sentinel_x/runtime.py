@@ -200,7 +200,8 @@ class ScopeRuntime:
                 if attempt:
                     raise ValueError(
                         "The model returned invalid JSON after one automatic retry. "
-                        "The analysis could not be completed; no extracted values were substituted."
+                        "The analysis could not be completed; no extracted values were substituted. "
+                        f"Parser: {exc}. Model output is retained in the job's Scope records."
                     ) from exc
                 job.emit("stage", stage="Retrying structured model output")
                 messages.extend(
@@ -224,5 +225,6 @@ class ScopeRuntime:
                     {
                         "attempt": 1,
                         "reason": "invalid_json",
+                        "parse_error": str(exc),
                     }
                 )

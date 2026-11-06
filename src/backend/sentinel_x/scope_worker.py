@@ -243,7 +243,12 @@ class Engine:
         in_tool = False
         prompt_length = len(prompt_ids)
         end_ids = self.model.generation_config.eos_token_id
-        end_ids = [end_ids] if isinstance(end_ids, int) else end_ids or []
+        end_ids = set([end_ids] if isinstance(end_ids, int) else end_ids or [])
+        # A model config can specify end-of-text while the chat tokenizer uses
+        # a distinct end-of-turn token (Qwen: <|im_end|>). Both end generation;
+        # neither belongs in answer JSON, streaming text, or the next prompt.
+        if self.tokenizer.eos_token_id is not None:
+            end_ids.add(self.tokenizer.eos_token_id)
         close_think = self.tokenizer.convert_tokens_to_ids("</think>")
         open_think = self.tokenizer.convert_tokens_to_ids("<think>")
         send({"event": "stage", "stage": "Processing prompt"})
@@ -333,14 +338,16 @@ class Engine:
                     prompt_tokens=prompt_length,
                     generated_tokens=len(generated),
                     output_truncated=bool(generated and generated[-1] not in end_ids),
+                    stop_token_ids=sorted(end_ids),
+                    finish_reason="stop" if generated and generated[-1] in end_ids else "length",
+                    output_text=self.tokenizer.decode(answer_ids, skip_special_tokens=False),
+                    thinking_text=self.tokenizer.decode(thinking_ids, skip_special_tokens=False),
                 )
                 if capture.record["output_truncated"]:
                     capture.record["truncated"] = True
                 record = capture.finish()
                 send({"event": "scope", "record": record})
-                answer = parse_output(
-                    self.tokenizer.decode(answer_ids, skip_special_tokens=False), request["tools"]
-                )
+                answer = parse_output(capture.record["output_text"], request["tools"])
                 send({"event": "result", "message": answer})
         except Exception as exc:
             capture.record.update(status="failed", error=str(exc))

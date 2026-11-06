@@ -43,6 +43,19 @@ Completed panels start collapsed and expand independently. Feature descriptions
 are not invented. Saved records include the actual model/SAE revisions,
 quantization, device, offload choice, call boundary, token positions and capture
 status. Edited responses retain analysis labeled as original-response analysis.
+
+Generation stops on either the model generation config's EOS IDs or the
+tokenizer's EOS ID. For the installed Qwen model, the model config names
+`<|endoftext|>` while the chat tokenizer names `<|im_end|>`. Both are generation
+boundaries and are excluded from streamed answers and JSON parsing. Other text,
+including function-call tags, is preserved. JSON is still parsed strictly; this
+does not salvage truncated objects or substitute semantic scores.
+
+Completed generation records also retain `output_text`, `thinking_text`,
+`stop_token_ids`, and `finish_reason` so malformed-output failures can be inspected
+even when sparse token capture reaches its limit. Auxiliary extraction runs with
+thinking disabled; its empty thinking text is expected. Older records may lack
+these fields; their token IDs and phases can reconstruct captured output.
 Markdown exports include the sparse records. Older messages gain no invented
 measurements.
 
@@ -55,7 +68,7 @@ Settings reset clears model/device/offload preferences and preserves both pairs.
 Factory reset removes downloaded pairs within application storage. Obsolete
 GGUF and llama.cpp files are ignored and preserved during ordinary upgrades.
 
-Validation: 171 tests pass offline, including model selection, ROCm admission and
+Validation: 177 tests pass offline, including model selection, ROCm admission and
 device routing, paired downloads, offload maps, activation math, capture,
 conversation storage, exports and existing retrieval/GraphSAGE tests.
 A real bitsandbytes 0.50.2 NF4
@@ -63,6 +76,15 @@ linear layer executed on CPU. Neither complete 9B nor complete 2B loading and
 inference has been measured against the memory targets. CUDA validation remains
 blocked by driver access. The earlier frozen startup check failed on a PyTorch
 shared-library dependency; release packaging remains unfinished.
+
+On 2026-11-05, replaying the failed Case 01 request in isolated app storage
+loaded the real 9B/SAE pair on the RX 9070 XT with ROCm and SAE CPU offloading.
+The semantic extraction parsed on its first attempt with complete Scope capture,
+and GraphSAGE returned the spread prediction. The saved failure had contained a
+valid semantic JSON object followed by `<|im_end|>`; recognizing the tokenizer's
+EOS fixed this without changing the model's score. This virality-only workflow
+formats its final response programmatically. It does not validate general chat,
+the 2B pair, prediction quality, or peak-memory targets.
 
 ## Readable activity view
 

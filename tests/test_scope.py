@@ -23,9 +23,24 @@ from sentinel_x.state import Store
 
 
 class Tokenizer:
+    # Qwen's tokenizer ends a chat turn with a different token from the model
+    # config's end-of-text token when no generation_config.json is installed.
+    eos_token_id = 12
+
     def decode(self, ids, **kwargs):
         return "".join(
-            {3: "reason", 4: "answer", 8: "</think>", 9: "<end>"}.get(i, f"[{i}]") for i in ids
+            {
+                3: "reason",
+                4: "answer",
+                5: '{"score":0.95}',
+                6: "\n",
+                8: "</think>",
+                9: "<end>",
+                12: "<|im_end|>",
+                13: "<tool_call><function=lookup><parameter=query>Mars</parameter></function></tool_call>",
+                14: '{"text":"<|im_end|>"}',
+            }.get(i, f"[{i}]")
+            for i in ids
         )
 
     def convert_tokens_to_ids(self, text):
@@ -151,6 +166,82 @@ class WorkerGenerationTests(unittest.TestCase):
         )
         self.assertEqual(len(engine.layer._forward_hooks), 0)
         return engine, events
+
+    def test_tokenizer_turn_end_stops_before_control_token_reaches_json_parser(self):
+        engine, events = self.generate([5, 12, 6, 9])
+        answer = events[-1]["message"]["content"]
+        self.assertEqual(json.loads(answer), {"score": 0.95})
+        self.assertEqual(engine.model.inputs, [10, 11, 5, 12])
+        saved = [e["record"] for e in events if e["event"] == "scope"][-1]
+        self.assertEqual(saved["tokens"][-1]["phase"], "boundary")
+        self.assertEqual(saved["tokens"][-1]["token_id"], 12)
+        self.assertFalse(saved["output_truncated"])
+        self.assertEqual(saved["finish_reason"], "stop")
+        self.assertEqual(saved["output_text"], answer)
+        self.assertEqual(saved["thinking_text"], "")
+        self.assertEqual(saved["stop_token_ids"], [9, 12])
+        self.assertFalse(any("<|im_end|>" in e["text"] for e in events if e["event"] == "piece"))
+
+    def test_turn_end_preserves_thinking_boundary(self):
+        _, events = self.generate([3, 8, 5, 12], thinking=True)
+        self.assertEqual(json.loads(events[-1]["message"]["content"]), {"score": 0.95})
+        self.assertEqual(
+            "".join(e["text"] for e in events if e["event"] == "piece" and e["reasoning"]), "reason"
+        )
+
+    def test_literal_control_token_text_inside_json_is_not_removed(self):
+        _, events = self.generate([14, 12, 9])
+        self.assertEqual(json.loads(events[-1]["message"]["content"]), {"text": "<|im_end|>"})
+
+    def test_turn_end_does_not_strip_tool_call_tags(self):
+        engine = fixture_engine([13, 12, 9])
+        events = []
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "parameters": {
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            }
+        ]
+        engine.generate(
+            {
+                "messages": [{"role": "user", "content": "lookup Mars"}],
+                "tools": tools,
+                "thinking": False,
+                "kind": "response",
+                "max_tokens": 5,
+            },
+            lambda event: events.append(copy.deepcopy(event)),
+            threading.Event(),
+        )
+        message = events[-1]["message"]
+        self.assertEqual(message["content"], "")
+        self.assertEqual(
+            json.loads(message["tool_calls"][0]["function"]["arguments"]), {"query": "Mars"}
+        )
+
+    def test_generation_eos_list_is_combined_with_tokenizer_eos(self):
+        for stop in (9, 12):
+            engine = fixture_engine([5, stop, 6])
+            engine.model.generation_config.eos_token_id = [9]
+            events = []
+            engine.generate(
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "tools": [],
+                    "thinking": False,
+                    "kind": "auxiliary",
+                    "max_tokens": 4,
+                },
+                lambda event: events.append(copy.deepcopy(event)),
+                threading.Event(),
+            )
+            self.assertEqual(json.loads(events[-1]["message"]["content"]), {"score": 0.95})
 
     def test_rocm_generation_uses_cuda_tensors_but_saves_rocm_provenance(self):
         original_tensor, original_to = torch.tensor, torch.Tensor.to

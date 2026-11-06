@@ -102,6 +102,8 @@ CUDA PyTorch to `torch==2.14.1+rocm7.2` with HIP `7.2.53211`, Python 3.15, and
 `bitsandbytes==0.50.2`. On the Radeon RX 9070 XT (`gfx1201`), a BF16 identity
 matrix multiplication and the diagnostic's NF4 projection both passed. The
 dependency check also passed. This validates small GPU kernels on this host;
-full-model AMD inference and peak memory remain unvalidated.
+the 9B/SAE pair subsequently loaded and completed a Case 01 semantic extraction
+and GraphSAGE workflow after the end-of-turn fix described in [SCOPE.md](SCOPE.md).
+Peak memory and broader AMD inference validation remain outstanding.
 ROCm application support does not install host
 drivers or add the Docker configuration from the separate Scope Docker branch.
