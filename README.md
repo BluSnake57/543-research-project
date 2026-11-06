@@ -646,5 +646,8 @@ The final result is a working local research application that connects:
 Fifteen user-workflow model evaluations are prepared under
 `datasets/twitter16-model-cases/`, with source posts, user requests, hidden outcomes,
 and reviewer scorecards. See [model evaluation and pass/fail guidelines](docs/TWITTER16_VALIDATION.md)
-for Qwen analysis, GraphSAGE prediction, and end-to-end assessment. The full
-Twitter16 corpus remains available in `datasets/twitter16-suite/` for aggregate scoring.
+for Qwen analysis, GraphSAGE prediction, and end-to-end assessment. In the main
+app, choose **Import posts → Twitter15 / Twitter16 input folder…**, select a
+case's `input/` folder, and wait for its cascade to be attached to the conversation.
+The Trainer is not required. When prepared locally, the larger Twitter16 corpus
+under `datasets/twitter16-suite/` supports aggregate scoring.

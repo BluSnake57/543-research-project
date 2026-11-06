@@ -30,8 +30,14 @@ The input label file is empty so original rumor annotations do not become answer
    Include some genuinely unresolved cases; an arbitrary empty corpus cannot
    establish fact-checking ability. If no evidence pack has been prepared, evidence
    quality is NOT EVALUATED; only abstention behavior can be assessed.
-3. Import the case's `input/` and select its cascade. Open a fresh conversation,
-   use the source text and request in `USER_TASK.md`, and let Sentinel-X perform
+3. Open a fresh conversation in the main application. Choose **Import posts →
+   Twitter15 / Twitter16 input folder…** and select the case's `input/` folder,
+   for example `datasets/twitter16-model-cases/case-01/input`. Selecting the case
+   folder itself also works. Wait for the import to finish; successful cascades
+   are automatically checked in the dataset drawer and attached to that
+   conversation. The Trainer is not needed. Choose **JSON / JSONL file…** only
+   for those post-file formats. Use the source text and request in `USER_TASK.md`,
+   and let Sentinel-X perform
    its normal evidence retrieval, semantic analysis, and GraphSAGE prediction.
    Do not supply the expected class, final size, rumor annotation, or scorecard.
 4. Evaluate the final answer, cited passages, and saved model/tool analysis using
