@@ -56,6 +56,58 @@ belong under `.cache/research/`, which Git ignores. Model files are read through
 symlinks into isolated storage; user settings, conversations and the selected
 checkpoint are never changed.
 
+### Collect all 15 cases unattended
+
+For a single development baseline using the current implementation:
+
+```bash
+.venv/bin/python scripts/run_all_cases.py --dry-run
+.venv/bin/python -u scripts/run_all_cases.py --output .cache/research/all-cases-baseline-512-v1
+```
+
+The launcher runs Cases 01–15 in order, one at a time. The next case starts when
+the previous case finishes; there is no overlapping GPU generation or scheduled
+delay. It uses Thinking On with a 512-token budget for comparison with the latest
+pilot, not as an established optimal budget. Each case gets a fresh conversation
+and a 1,200-second timeout. Failures are saved and the run continues. The app's
+existing single response-repair attempt remains enabled; there are no extra
+case repetitions within a pass. Model weights, prompts, validation rules and the
+FEVER candidate pack are unchanged by the launcher.
+
+Useful options are `--thinking-budget 256|512|1024`, `--timeout-seconds SECONDS`
+and `--model-data PATH`. Omitting `--output` creates a directory with a UTC
+timestamp. Existing output directories are refused unless `--resume` is explicit.
+Resume skips successful cases and retries failed/interrupted cases in new attempt
+files, keeping previous failures. Report initial attempts separately from retries;
+do not treat a successful retry as an initial success. The frozen manifest must
+match, including the application code and prompts.
+
+The output directory contains:
+
+- `status.json`: `running`, then `completed`, `completed_with_failures`, `failed`
+  or `interrupted`. Finishing with failures still records those outcomes.
+- `run.log`: case starts, generation stages and completion/errors.
+- `results.csv`: case, budget, attempt, status, elapsed seconds, probability,
+  predicted class and error, updated after each case.
+- `attempts/*.json`: accepted analyses plus raw model outputs, saved thinking,
+  repair outputs and measured predictions, including rejected responses.
+- `sessions/`: complete conversations and Scope activation records.
+- `config.json`, `manifest.json`, `data-audit/`, `summary.json`: frozen settings,
+  provenance, source audit and collection progress.
+
+Reference scoring is deferred for this launcher. After collection, score the
+saved outputs without rerunning the model:
+
+```bash
+.venv/bin/python scripts/research.py score --output .cache/research/all-cases-baseline-512-v1
+```
+
+This writes `scores.json` and reliability figures; human semantic judgments remain
+pending. Keep the computer awake and avoid another local model run while collecting.
+Ctrl-C interrupts the current case and retains earlier results. A crash or power
+loss can leave `status.json` showing `running`; logs and saved attempt files remain
+available. Initial results are saved after each case, not just at the end.
+
 ```bash
 .venv/bin/python scripts/research.py fetch-sources
 .venv/bin/python scripts/research.py audit --output .cache/research/audit

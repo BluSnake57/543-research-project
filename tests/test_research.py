@@ -1,6 +1,7 @@
 """Data-audit independence, protocol compatibility, evidence isolation and resumability."""
 
 import importlib.util
+import io
 import json
 from pathlib import Path
 import shutil
@@ -305,6 +306,7 @@ class ResearchTests(unittest.TestCase):
         (cases / "case-01/USER_TASK.md").write_text(
             "Import `input/`, select this cascade, and ask:\n\nAssess spread.\n\nSave the complete response"
         )
+        shutil.copytree(cases / "case-01", cases / "case-02")
         checkpoint.with_suffix(".pt").write_bytes(b"fixture weights")
         service = Service(self.root / "service")
         self.addCleanup(service.jobs.shutdown, wait=True)
@@ -313,6 +315,10 @@ class ResearchTests(unittest.TestCase):
         class FakeAssistant:
             def chat(self, conv, text, ids, job, thinking):
                 self.calls = getattr(self, "calls", 0) + 1
+                job.data["scope"] = [{
+                    "kind": "response", "status": "complete", "output_text": "raw answer",
+                    "thinking_text": "saved reasoning", "tokens": [{"large": "activation data"}],
+                }]
                 if self.calls == 1:
                     raise ValueError("fixture failure")
                 return {
@@ -327,7 +333,7 @@ class ResearchTests(unittest.TestCase):
             "sources": str(sources),
             "checkpoint": str(checkpoint),
             "evidence_pack": "fixture",
-            "case_names": ["case-01"],
+            "case_names": ["case-01", "case-02"],
             "budgets": [256],
             "model_data": "fixture",
         }
@@ -350,11 +356,44 @@ class ResearchTests(unittest.TestCase):
             patch("sentinel_x.research.runner.close"),
         ):
             evaluate(config, output)
+            # A failed first case must not prevent the next case from running.
+            self.assertEqual(service.assistant.calls, 2)
+            first_pass = [json.loads(p.read_text()) for p in sorted((output / "attempts").glob("*.json"))]
+            self.assertEqual([r["status"] for r in first_pass], ["failed", "completed"])
             evaluate(config, output)
             evaluate(config, output)
-        self.assertEqual(service.assistant.calls, 2)
+        self.assertEqual(service.assistant.calls, 3)
         rows = [json.loads(p.read_text()) for p in sorted((output / "attempts").glob("*.json"))]
-        self.assertEqual([r["status"] for r in rows], ["failed", "completed"])
+        self.assertEqual([r["status"] for r in rows], ["failed", "completed", "completed"])
+        for row in rows:
+            self.assertEqual(row["model_outputs"][0]["output_text"], "raw answer")
+            self.assertEqual(row["model_outputs"][0]["thinking_text"], "saved reasoning")
+            self.assertNotIn("tokens", row["model_outputs"][0])
+            self.assertTrue(row["job_id"])
+
+    def test_all_cases_launcher_dry_run_includes_full_suite_without_starting_model(self):
+        spec = importlib.util.spec_from_file_location("run_all_cases", ROOT / "scripts/run_all_cases.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        output = self.root / "collection"
+        with patch.object(module, "execute") as execute, patch("sys.stdout", new_callable=io.StringIO) as stream:
+            self.assertEqual(module.main(["--dry-run", "--output", str(output)]), 0)
+            config = json.loads(stream.getvalue())["config"]
+        execute.assert_not_called()
+        self.assertFalse(output.exists())
+        self.assertEqual(config["case_names"], [f"case-{i:02d}" for i in range(1, 16)])
+        self.assertEqual(config["budgets"], [512])
+        self.assertEqual(config["timeout_seconds"], 1200)
+        self.assertEqual(config["evidence_pack"], "docs/research/fever-v1/pack.json")
+
+    def test_collection_defers_reference_scoring_and_records_failures(self):
+        from sentinel_x.research.execution import execute
+
+        output = self.root / "collection-status"
+        with patch("sentinel_x.research.reporting.score_run") as score:
+            execute("collect", {}, output, lambda c, o: {"completed": 1, "latest_cases": 2})
+        score.assert_not_called()
+        self.assertEqual(json.loads((output / "status.json").read_text())["status"], "completed_with_failures")
 
     def test_output_lock_releases_after_failure(self):
         from sentinel_x.research.locking import run_lock

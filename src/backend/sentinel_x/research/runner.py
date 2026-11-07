@@ -225,6 +225,7 @@ def evaluate(config, output):
                 }
                 path = output / "attempts" / f"{name}-{budget}-{len(previous) + 1:03d}.json"
                 write_json(path, row)
+                print("START CASE", name, "Thinking budget", budget, flush=True)
                 start = time.monotonic()
                 job = ResearchJob(service.jobs, config.get("timeout_seconds", 1200))
                 try:
@@ -238,6 +239,8 @@ def evaluate(config, output):
                     ]
                     row["session"] = str(service.store.root)
                     row["conversation"] = conv
+                    row["job_id"] = job.data["id"]
+                    write_json(path, row)
                     result = service.assistant.chat(
                         conv,
                         graph["source_text"] + "\n\n" + prompt_for(cases / name),
@@ -269,6 +272,16 @@ def evaluate(config, output):
                         scope=compact_scope(job.data.get("scope", [])),
                     )
                 finally:
+                    # Keep readable outputs next to every result, including rejected answers.
+                    # Large activation arrays remain in the isolated session database.
+                    output_fields = (
+                        "call_id", "kind", "status", "output_text", "thinking_text",
+                        "finish_reason", "generated_tokens", "output_truncated", "error",
+                    )
+                    row["model_outputs"] = [
+                        {key: capture[key] for key in output_fields if key in capture}
+                        for capture in job.data.get("scope", [])
+                    ]
                     # A failed Qwen explanation must not discard a computed GraphSAGE result.
                     if not row.get("prediction"):
                         measured = [
