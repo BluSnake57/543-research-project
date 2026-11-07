@@ -135,7 +135,7 @@ reported separately from software-test success.
 
 ## Unattended pilot and automatic logging
 
-The current pilot writes `.cache/research/pilot-v2/run.log`, `status.json`,
+The baseline pilot writes `.cache/research/pilot-v2/run.log`, `status.json`,
 `results.csv`, `summary.json`, and per-attempt JSON automatically. At the end it
 also writes `scores.json` and reliability SVGs when predictions are available.
 `completed_with_failures` means execution finished with failed/incomplete cases;
@@ -164,4 +164,56 @@ even on exceptions or Ctrl-C. A machine shutdown cannot execute cleanup: in that
 case a stale `running` status is possible, but the OS lock releases and a subsequent
 identical invocation preserves the old attempt and resumes remaining work.
 
-Implementation verification: 211 tests passed; Ruff and `git diff --check` passed.
+Pilot-v2 finished with 2/9 accepted answers: Case 02 at budgets 512 and 1024.
+Four attempts failed JSON parsing and three failed factual citation validation.
+All nine retained GraphSAGE predictions; increasing Thinking did not change the
+three semantic estimates or predicted probabilities. None of these failures was
+an output-token truncation or GPU memory error. Accepted formatting alone did
+not establish evidence quality: the Case 02 answer still misdescribed a passage
+and used unsupported rumor wording. Human scoring remains pending.
+
+The response repair uses a shared, nested JSON example for both initial answers
+and the bounded retry. The retry starts a fresh message context containing the
+grounding instructions, request, current evidence, failed draft and specific
+validation error. Follow-up context and previous tool results are preserved as
+quoted context. The failed draft is quoted data. It is never silently split or
+trimmed into a successful answer. Duplicate keys, nonfinite values, incomplete
+analysis and unsupported factual citations fail validation. Raw outputs remain
+in Scope records, and retry messages and their outcome remain in the conversation
+audit. Formatting is prompted and then validated; the worker does not implement
+grammar-constrained decoding.
+
+Evidence instructions distinguish irrelevant search results from refutation,
+require source-based descriptions, and prohibit inferring a rumor/falsehood label
+from missing corroboration. These instructions do not replace human relevance
+and factuality review. The FEVER pack, evaluation references and checkpoint remain
+fixed for the repair comparison.
+
+The first repair smoke run (`.cache/research/pilot-repair-v3-512`) completed all
+three cases on their first response at budget 512, up from 1/3 at that budget in
+pilot-v2. It took about 12 minutes. The raw outputs still exposed quality issues:
+Cases 01 and 02 conflated node and edge counts; Case 01 assumed linked video
+content. This is a formatting improvement, not a claim that all content is correct.
+The three changed implementation files for that preliminary run are retained in
+its ignored `implementation/` directory alongside the frozen run manifest.
+
+The subsequent changes check explicit node/edge count restatements in a single
+cascade's limitations/assessment against the actual prediction and request a
+repair on mismatches. This check is intentionally narrow: it does not judge
+semantic entailment or guess attribution among multiple cascades. The prompt now
+asks for qualitative interpretation alongside the application's exact numeric
+report, distinguishes probability cutoffs from final-size targets, and avoids
+assuming a media type from URL placeholders. Test the final version separately:
+
+```bash
+.venv/bin/python -u scripts/research.py evaluate \
+  --config docs/research/repair-smoke.json \
+  --output .cache/research/pilot-repair-v4-512
+```
+
+Inspect that directory's `status.json`, `results.csv`, `summary.json` and
+`run.log` for the final retest outcome; do not infer its result from v3. The
+512-token smoke test does not select an optimal Thinking budget. The checkpoint
+and its Case 01 false negative have not been changed.
+
+Implementation verification: 220 tests passed; Ruff and `git diff --check` passed.

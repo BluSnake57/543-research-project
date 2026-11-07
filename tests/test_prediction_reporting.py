@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from sentinel_x.assistant import AnswerFormatError, validate_prediction_answer
+from sentinel_x.answer_contract import answer_contract
 from sentinel_x.graphs import native_twitter
 from sentinel_x.jobs import Job
 from sentinel_x.prediction_reporting import scope_report
@@ -32,6 +33,13 @@ def complete_answer():
 
 
 class PredictionAnswerValidationTests(unittest.TestCase):
+    def test_contract_has_one_complete_nested_example(self):
+        contract = answer_contract(prediction=True)
+        example = json.loads(contract.splitlines()[1])
+        validate_prediction_answer(json.dumps(example), [])
+        self.assertEqual(set(example['analysis']), set(complete_answer()['analysis']))
+        self.assertNotIn('JSON AND', contract)
+
     def test_missing_or_empty_sections_fail_instead_of_silently_completing(self):
         for field in complete_answer()["analysis"]:
             for invalid in (None, "", "  ", [], 135):
@@ -73,6 +81,28 @@ class PredictionAnswerValidationTests(unittest.TestCase):
         self.assertEqual(
             [c["verdict"] for c in final["claims"]], ["supported", "insufficient_evidence"]
         )
+
+    def test_live_pilot_count_conflation_requires_correction(self):
+        measured = [{'observed_nodes': 135, 'observed_edges': 136}]
+        for text in ('135 nodes/edges', '135 observed nodes and edges', '136 nodes and 135 edges'):
+            with self.subTest(text=text):
+                answer = complete_answer()
+                answer['analysis']['limitations'] = text
+                with self.assertRaisesRegex(AnswerFormatError, 'misstates observed graph counts'):
+                    validate_prediction_answer(json.dumps(answer), [], measured)
+        answer = complete_answer()
+        answer['analysis']['limitations'] = '135 nodes and 136 edges were observed.'
+        result = validate_prediction_answer(json.dumps(answer), [], measured)
+        self.assertEqual(result['analysis']['limitations'], answer['analysis']['limitations'])
+
+    def test_measurement_check_preserves_source_numbers_and_equal_counts(self):
+        answer = complete_answer()
+        answer['analysis']['claim'] = 'The source talks about 500 nodes.'
+        answer['analysis']['limitations'] = 'There are 135 nodes/edges.'
+        validate_prediction_answer(json.dumps(answer), [], [{'observed_nodes': 135, 'observed_edges': 135}])
+        # Prose attribution for multiple cascades is not guessed by this check.
+        validate_prediction_answer(json.dumps(answer), [], [
+            {'observed_nodes': 1, 'observed_edges': 2}, {'observed_nodes': 135, 'observed_edges': 136}])
 
     def test_scope_summary_uses_saved_measurements_and_discloses_capture_limits(self):
         report = scope_report(
@@ -219,6 +249,10 @@ class PredictionReportingTests(unittest.TestCase):
         def respond(messages, tools, current_job):
             if len(replies) == 1:
                 self.assertIn("five analysis sections", messages[-1]["content"])
+                self.assertEqual([m['role'] for m in messages], ['system', 'user'])
+                self.assertIn('"analysis": {', messages[0]['content'])
+                self.assertNotIn('JSON AND an analysis', messages[0]['content'])
+                self.assertIn('failed_draft', messages[-1]['content'])
                 self.assertFalse(current_job.thinking_enabled)
                 self.assertEqual(tools, [])
             return {"role": "assistant", "content": json.dumps(replies.pop(0))}
@@ -237,6 +271,71 @@ class PredictionReportingTests(unittest.TestCase):
         self.assertIn("135 observed nodes", result["summary"])
         for key, value in complete_answer()["analysis"].items():
             self.assertEqual(result["analysis"][key], value)
+
+    def test_pilot_split_objects_and_graph_citations_get_fresh_repair_and_strict_validation(self):
+        for draft in ('split_objects', 'graph_citation', 'count_mismatch'):
+            with self.subTest(draft=draft):
+                conv = self.service.store.create_conversation()['id']
+                job = Job(self.service.jobs, 'test')
+                first = complete_answer()
+                if draft == 'split_objects':
+                    analysis = first.pop('analysis')
+                    raw = json.dumps(first) + '\n' + json.dumps(analysis)
+                elif draft == 'graph_citation':
+                    first['claims'] = [{'claim': 'GraphSAGE predicts nonviral',
+                                        'verdict': 'supported', 'citations': [self.graph['id']]}]
+                    raw = json.dumps(first)
+                else:
+                    first['analysis']['limitations'] = '135 nodes/edges were observed.'
+                    raw = json.dumps(first)
+                captured = []
+
+                def respond(messages, tools, current_job):
+                    captured.append(messages)
+                    return {'role': 'assistant', 'content': raw if len(captured) == 1 else json.dumps(complete_answer())}
+
+                with (
+                    patch.object(self.service.runtime, 'structured', return_value={'emotional_language': 0.95}),
+                    patch.object(self.service.runtime, 'stream', side_effect=respond),
+                    patch.object(self.service.retrieval, 'search', return_value=[]),
+                ):
+                    result = self.service.assistant.chat(conv, 'Assess spread', [self.graph['id']], job)
+                self.assertEqual(len(captured), 2)
+                self.assertEqual(len(captured[1]), 2)
+                self.assertEqual(captured[1][1]['role'], 'user')
+                payload = json.loads(captured[1][1]['content'].split('\n', 1)[1])
+                self.assertEqual(payload['failed_draft'], raw)
+                self.assertEqual(payload['retrieved_evidence'], [])
+                if draft == 'split_objects':
+                    self.assertIn('Extra data', payload['parser_detail'])
+                elif draft == 'graph_citation':
+                    self.assertIn('cascade IDs are not evidence', payload['validation_error'])
+                else:
+                    self.assertIn('misstates observed graph counts', payload['validation_error'])
+                self.assertFalse(result['prediction']['viral'])
+                self.assertEqual(result['claims'], [])
+                self.assertTrue(job.thinking_enabled)
+                audit = self.service.store.messages(conv)[0]['data']['audit']['format_retry']
+                self.assertEqual(audit['status'], 'completed')
+
+    def test_failed_repair_retains_raw_draft_and_does_not_erase_missing_analysis(self):
+        conv = self.service.store.create_conversation()['id']
+        job = Job(self.service.jobs, 'test')
+        raw = json.dumps({'summary': 'Only measurements', 'claims': []})
+        with (
+            patch.object(self.service.runtime, 'structured', return_value={'emotional_language': 0.95}),
+            patch.object(self.service.runtime, 'stream', return_value={'role': 'assistant', 'content': raw}) as stream,
+            patch.object(self.service.retrieval, 'search', return_value=[]),
+        ):
+            with self.assertRaisesRegex(AnswerFormatError, 'five analysis sections'):
+                self.service.assistant.chat(conv, 'Assess spread', [self.graph['id']], job)
+        self.assertEqual(stream.call_count, 2)
+        self.assertTrue(job.thinking_enabled)
+        messages = self.service.store.messages(conv)
+        self.assertNotIn('assistant', [m['role'] for m in messages])
+        audit = messages[0]['data']['audit']['format_retry']
+        self.assertEqual(audit['status'], 'failed')
+        self.assertIn('five analysis sections', audit['error'])
 
     def test_case01_prompt_regeneration_matches_versioned_file(self):
         spec = importlib.util.spec_from_file_location(

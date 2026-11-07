@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from sentinel_x.assistant import AnswerFormatError, validate_answer
+from sentinel_x.answer_contract import repair_messages
 from sentinel_x.exporting import render_conversation
 from sentinel_x.jobs import Job
 from sentinel_x.service import Service
@@ -89,3 +90,43 @@ class AnswerFormatTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(AnswerFormatError):
                 validate_answer(text, [])
         self.assertEqual(validate_answer('\ufeff```json\n{"summary":"ok","claims":[]}\n```', [])['summary'], 'ok')
+
+    def test_ambiguous_or_trailing_output_is_not_silently_discarded(self):
+        for raw in (
+            '{"summary":"first","summary":"second","claims":[]}',
+            '{"summary":"first","claims":[]} {"analysis":{}}',
+            '{"summary":"first","claims":[],"score":NaN}',
+            '```json\n{"summary":"first","claims":[]}\n```\nMore claims here.',
+        ):
+            with self.subTest(raw=raw), self.assertRaises(AnswerFormatError) as error:
+                validate_answer(raw, [])
+            self.assertTrue(error.exception.detail)
+
+    def test_insufficiency_explanation_is_preserved_without_fabricating_citations(self):
+        claim = {
+            'claim': 'The event happened.', 'verdict': 'insufficient_evidence',
+            'explanation': 'The retrieved passage discusses a different event.', 'citations': [],
+        }
+        result = validate_answer(json.dumps({'summary': 'Unverified.', 'claims': [claim]}), [])
+        self.assertEqual(result['claims'], [claim])
+
+    def test_repair_preserves_followup_context_as_data_without_failed_assistant_continuation(self):
+        context = [
+            {'role': 'user', 'content': 'Assess the claim about Mars.'},
+            {'role': 'assistant', 'content': 'The retrieved passages do not establish it.'},
+            {'role': 'user', 'content': 'Explain why.'},
+        ]
+        messages = repair_messages('Evidence instructions', 'Explain why.', [], 'broken draft',
+                                   AnswerFormatError('Invalid JSON'), context=context)
+        self.assertEqual([m['role'] for m in messages], ['system', 'user'])
+        data = json.loads(messages[-1]['content'].split('\n', 1)[1])
+        self.assertEqual(data['conversation_context'], context[:-1])
+        self.assertEqual(data['failed_draft'], 'broken draft')
+        self.assertEqual(context[-1]['content'], 'Explain why.')
+
+    def test_fresh_request_repair_has_no_redundant_history(self):
+        messages = repair_messages('Evidence instructions', 'Check this.', [], 'broken',
+                                   AnswerFormatError('Invalid JSON'),
+                                   context=[{'role': 'user', 'content': 'Check this.'}])
+        data = json.loads(messages[-1]['content'].split('\n', 1)[1])
+        self.assertNotIn('conversation_context', data)
